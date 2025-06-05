@@ -68,10 +68,72 @@ kern_prediapause = kern_prediapause / torch.sum(kern_prediapause, dim=0, keepdim
 
 #################
 # Diapause kernel
-# TBD, need to figure out how to deal with two-dimensional population
 #################
+## Assumed Parameters
+c = torch.tensor(-5.627108200)
+pdr_t = torch.tensor(0.059969414)
+pdr_t_2 = torch.tensor(0.010390411)
+pdr_t_4 = torch.tensor(-0.000007987)
+rp_c = torch.tensor(0.00042178)
+rs_c = torch.tensor(0.7633152)
+rs_rp = torch.tensor(-0.6404470)
+I_0 = torch.tensor(1.1880)
+A_1 = torch.tensor(1.56441438)
+A_2 = torch.tensor(0.46354992)
+t_min = torch.tensor(-5)
+t_max = torch.tensor(25)
+alpha = torch.tensor(2.00000)
+beta = torch.tensor(0.62062)
+gamma = torch.tensor(0.56000)
 
+## Optimized Parameters
+sigma_I_diapause = torch.tensor(1.1, dtype=dtype, requires_grad=True)
+sigma_D_diapause = torch.tensor(1.1, dtype=dtype, requires_grad=True)
+
+## Compute kernel
+# Current strategy is to compute as a 4-D tensor to take advantage of broadcasting, then to 
+# reshape into a 2D matrix to take advantage of matrix multiplication
+ys = torch.linspace(0.0001, 1, n_bins)
+from_I = torch.reshape(xs, (n_bins, 1, 1, 1))
+to_I = torch.reshape(xs, (1, 1, n_bins, 1))
+from_D = torch.reshape(ys, (1, n_bins, 1, 1))
+to_D = torch.reshape(ys, (1, 1, 1, n_bins))
+
+Z = (t_max - temp) / (t_max - t_min)
+rp = 1 + rp_c*(torch.log(Z)**6)
+rs = rs_c + rs_rp*rp
+mu_I_diapause = (
+    from_I 
+    + (delta_t
+       * (torch.maximum(-1*from_I,
+                        (torch.log(rp)
+                         * (from_I 
+                            - I_0 
+                            - rs))))))
+# Change is expressed over entire input space, since
+# inhibitor depletion does not depend on development rate
+mu_I_diapause = torch.tile(mu_I_diapause, (1, n_bins, 1, 1)) 
+
+A = 0.3 + 0.7*(1-Z)**(A_1 * (Z**A_2))
+pdr = torch.exp(c + pdr_t*temp + pdr_t_2*(temp**2) + pdr_t_4*(temp**4))
+mu_D_diapause = (
+    from_D
+    + (delta_t
+       * (torch.maximum(torch.tensor(0),
+                        (pdr
+                         * (1 - from_I*A))))))
+
+# Using these we calculate lognormal distribution across
+# each axis. Multiplying together gets the final probability 
+# distribution.
+kern_I_diapause = LnormPDF(to_I, mu_I_diapause, sigma_I_diapause)
+kern_D_diapause = LnormPDF(to_D, mu_D_diapause, sigma_D_diapause)
+kern_diapause = kern_I_diapause * kern_D_diapause
+kern_diapause = kern_diapause / torch.sum(kern_diapause, (2, 3), keepdim=True)
+
+######################
 # Post-diapause kernel
+######################
 ## Assumed Parameters
 tau = torch.tensor(-0.0127)
 delta = torch.tensor(0.00297)
@@ -283,5 +345,3 @@ kern_adult = kern_adult / torch.sum(kern_adult, dim=0, keepdim=True)
 #     test = kern_postdiapause @ test
 # plt.show()
 
-plt.imshow(kern_adult.detach())
-plt.show()
