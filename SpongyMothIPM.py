@@ -40,12 +40,31 @@ dtype = torch.float
 # IPM Parameters
 ################
 n_bins = 100 # Resolution of physiological age for each stage
-shape = (n_bins, n_bins)
-xs = torch.linspace(0.0001, 1, n_bins)
-from_x = torch.reshape(xs, (1, n_bins))
-to_x = torch.reshape(xs, (n_bins, 1))
+min_x = 0.0001
+max_x = 1.5
 delta_t = 1
 temp = torch.tensor(15)
+
+##################
+# Helper Variables
+##################
+shape = (n_bins, n_bins)
+xs = torch.linspace(min_x, max_x, n_bins)
+xs_for_transfer = xs > 1
+input_xs = torch.zeros_like(xs)
+input_xs[0] = 1
+from_x = torch.reshape(xs, (1, n_bins))
+to_x = torch.reshape(xs, (n_bins, 1))
+# These are used for computing diapause kernel
+ys = torch.linspace(0.0001, 1, n_bins)
+from_I = torch.reshape(xs, (n_bins, 1, 1, 1))
+to_I = torch.reshape(xs, (1, 1, n_bins, 1))
+from_D = torch.reshape(ys, (1, n_bins, 1, 1))
+to_D = torch.reshape(ys, (1, 1, 1, n_bins))
+grid2d = torch.squeeze(torch.ones_like(from_I)*from_D)
+grid2d_for_transfer = grid2d > 1
+input_grid2d = torch.zeros_like(grid2d)
+input_grid2d[-1, 0] = 1
 
 #####################
 # Pre-diapause kernel
@@ -94,12 +113,6 @@ sigma_D_diapause = torch.tensor(1.1, dtype=dtype, requires_grad=True)
 ## Compute kernel
 # Current strategy is to compute as a 4-D tensor to take advantage of broadcasting, then to 
 # reshape into a 2D matrix to take advantage of matrix multiplication
-ys = torch.linspace(0.0001, 1, n_bins)
-from_I = torch.reshape(xs, (n_bins, 1, 1, 1))
-to_I = torch.reshape(xs, (1, 1, n_bins, 1))
-from_D = torch.reshape(ys, (1, n_bins, 1, 1))
-to_D = torch.reshape(ys, (1, 1, 1, n_bins))
-
 Z = (t_max - temp) / (t_max - t_min)
 rp = 1 + rp_c*(torch.log(Z)**6)
 rs = rs_c + rs_rp*rp
@@ -352,11 +365,26 @@ mu_adult = (
 kern_adult = LnormPDF(to_x, mu_adult, sigma_adult)
 kern_adult = kern_adult / torch.sum(kern_adult, dim=0, keepdim=True)
 
-# test = LnormPDF(xs, torch.tensor(0.2), torch.tensor(1.1))
-# test = test / test.sum()
+###############
+# Get Transfers
+###############
 
-# for i in range(4):
-#     plt.plot(test.detach(), label=i)
-#     test = kern_postdiapause @ test
-# plt.show()
+def get_transfers(tensor):
+    transfers = torch.sum(tensor*xs_for_transfer)
+    tensor = tensor*~xs_for_transfer
+    return tensor, transfers
+    
+def add_transfers(tensor, transfers):
+    return tensor + transfers*input_xs
 
+def get_transfers_diapause(tensor):
+    tensor = torch.reshape(tensor, shape)
+    transfers = torch.sum(tensor*grid2d_for_transfer)
+    tensor = tensor*~grid2d_for_transfer
+    tensor = torch.flatten(tensor)
+    return tensor, transfers
+
+def add_transfers_diapause(tensor, transfers):
+    tensor = torch.reshape(tensor, shape)
+    tensor = tensor + transfers*input_xs
+    return torch.flatten(tensor)

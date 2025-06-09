@@ -8,7 +8,7 @@ def tensor2d_imshow(tensor, n_bins):
     fig, ax = plt.subplots()
 
     im = ax.imshow(tensor)
-    fig.colorbar(im)
+    fig.colorbar(im, cmap='Reds')
     ax.set_ylim(-0.5, n_bins-0.5)
     ax.set_xlim(-0.5, n_bins-0.5)
 
@@ -64,15 +64,15 @@ def project_plot(kernel, pop, xs, num_gens):
     plt.show()
 
 if __name__ == '__main__':
-    pop0_I = SpongyMothIPM.LnormPDF(SpongyMothIPM.from_x, torch.tensor(0.2), torch.tensor(1.1))
-    pop0_D = SpongyMothIPM.LnormPDF(SpongyMothIPM.to_x, torch.tensor(0.4), torch.tensor(1.1))
-    kern_test = torch.nan_to_num(SpongyMothIPM.kern_diapause_2D)
-    pop0 = torch.flatten(pop0_I * pop0_D)
-    pop1 = kern_test @ pop0
-    pop0 = torch.reshape(pop0, (SpongyMothIPM.n_bins, SpongyMothIPM.n_bins))
-    pop1 = torch.reshape(pop1, (SpongyMothIPM.n_bins, SpongyMothIPM.n_bins))
-    tensor2d_imshow(pop0.detach(), SpongyMothIPM.n_bins)
-    tensor2d_imshow(pop1.detach(), SpongyMothIPM.n_bins)
+    # pop0_I = SpongyMothIPM.LnormPDF(SpongyMothIPM.from_x, torch.tensor(0.2), torch.tensor(1.1))
+    # pop0_D = SpongyMothIPM.LnormPDF(SpongyMothIPM.to_x, torch.tensor(0.4), torch.tensor(1.1))
+    # kern_test = torch.nan_to_num(SpongyMothIPM.kern_diapause_2D)
+    # pop0 = torch.flatten(pop0_I * pop0_D)
+    # pop1 = kern_test @ pop0
+    # pop0 = torch.reshape(pop0, SpongyMothIPM.shape)
+    # pop1 = torch.reshape(pop1, SpongyMothIPM.shape)
+    # tensor2d_imshow(pop0.detach(), SpongyMothIPM.n_bins)
+    # tensor2d_imshow(pop1.detach(), SpongyMothIPM.n_bins)
     # pop = SpongyMothIPM.LnormPDF(SpongyMothIPM.xs, torch.tensor(0.2), torch.tensor(1.1))
     # project_plot(SpongyMothIPM.kern_postdiapause.detach(), 
     #              pop, 
@@ -84,3 +84,4 @@ if __name__ == '__main__':
     #     (0, 1),
     #     (20, 20),
     #     ("I", "D"))
+    tensor2d_imshow(SpongyMothIPM.kern_prediapause.detach(), SpongyMothIPM.n_bins)
