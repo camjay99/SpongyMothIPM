@@ -114,7 +114,7 @@ sigma_D_diapause = torch.tensor(1.1, dtype=dtype, requires_grad=True)
 # Current strategy is to compute as a 4-D tensor to take advantage of broadcasting, then to 
 # reshape into a 2D matrix to take advantage of matrix multiplication
 Z = (t_max - temp) / (t_max - t_min)
-rp = 1 + rp_c*(torch.log(Z)**6)
+rp = 1 + rp_c*(torch.exp(Z)**6)
 rs = rs_c + rs_rp*rp
 mu_I_diapause = (
     from_I 
@@ -388,3 +388,30 @@ def add_transfers_diapause(tensor, transfers):
     tensor = torch.reshape(tensor, shape)
     tensor = tensor + transfers*input_xs
     return torch.flatten(tensor)
+
+###########
+# Mortality
+###########
+
+# Mortality for all stages beyond new instars will be 
+# temporarily modeling as a single, age-independent
+# rate. It will be replaced if better estimates are 
+# found.
+
+mortality_prediapause = torch.tensor(0.1, dtype=dtype, requires_grad=True)
+mortality_diapause = torch.tensor(0.1, dtype=dtype, requires_grad=True)
+mortality_postdiapause = torch.tensor(0.1, dtype=dtype, requires_grad=True)
+mortality_L1 = torch.tensor(0.7, dtype=dtype, requires_grad=True)
+mortality_L2 = torch.tensor(0.7, dtype=dtype, requires_grad=True)
+mortality_L3 = torch.tensor(0.7, dtype=dtype, requires_grad=True)
+mortality_L4 = torch.tensor(0.7, dtype=dtype, requires_grad=True)
+mortality_L5_male = torch.tensor(0.7, dtype=dtype, requires_grad=True)
+mortality_L5_L6_female = torch.tensor(0.7, dtype=dtype, requires_grad=True)
+mortality_pupae_male = torch.tensor(0.4, dtype=dtype, requires_grad=True)
+mortality_pupae_female = torch.tensor(0.4, dtype=dtype, requires_grad=True)
+mortality_adults = torch.tensor(0.1, dtype=dtype, requires_grad=True)
+
+def apply_mortality(tensor, mortality):
+    return tensor*(1-mortality)
+
+# Starvation of L1 instars prior to finding food
