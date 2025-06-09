@@ -9,6 +9,14 @@ def test_prediapause_kernel():
     pop1 = pop1.detach()
     assert torch.sum(pop0) == pytest.approx(torch.sum(pop1))
 
+def test_diapause_kernel():
+    pop0_I = SpongyMothIPM.LnormPDF(SpongyMothIPM.from_x, torch.tensor(0.2), torch.tensor(1.1))
+    pop0_D = SpongyMothIPM.LnormPDF(SpongyMothIPM.to_x, torch.tensor(0.2), torch.tensor(1.1))
+    pop0 = torch.flatten(pop0_I * pop0_D)
+    pop1 = SpongyMothIPM.kern_diapause_2D @ pop0
+    pop1 = pop1.detach()
+    assert torch.sum(pop0) == pytest.approx(torch.sum(pop1))
+
 def test_postdiapause_kernel():
     pop0 = SpongyMothIPM.LnormPDF(SpongyMothIPM.xs, torch.tensor(0.2), torch.tensor(1.1))
     pop1 = SpongyMothIPM.kern_postdiapause @ pop0

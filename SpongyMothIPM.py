@@ -129,8 +129,17 @@ mu_D_diapause = (
 # distribution.
 kern_I_diapause = LnormPDF(to_I, mu_I_diapause, sigma_I_diapause)
 kern_D_diapause = LnormPDF(to_D, mu_D_diapause, sigma_D_diapause)
-kern_diapause = kern_I_diapause * kern_D_diapause
-kern_diapause = kern_diapause / torch.sum(kern_diapause, (2, 3), keepdim=True)
+kern_diapause_4D = kern_I_diapause * kern_D_diapause
+kern_diapause_4D = (kern_diapause_4D 
+                    / torch.sum(kern_diapause_4D, (2, 3), keepdim=True))
+# Need to reshape kernel so that it can be 
+# used in matrix-vector multiplication.
+kern_diapause_2D = torch.reshape(kern_diapause_4D, 
+                                 (n_bins, n_bins, n_bins*n_bins))
+kern_diapause_2D = torch.permute(kern_diapause_2D, (2, 0, 1))
+kern_diapause_2D = torch.reshape(kern_diapause_2D, 
+                                 (n_bins*n_bins, n_bins*n_bins))
+
 
 ######################
 # Post-diapause kernel
@@ -156,8 +165,13 @@ mu_postdiapause = (
                 + kappa*temp 
                 + psi*temp**2 
                 + zeta*temp**3))))) # a_T * A
-kern_postdiapause = LnormPDF(to_x, mu_postdiapause, sigma_postdiapause)
-kern_postdiapause = kern_postdiapause / torch.sum(kern_postdiapause, dim=0, keepdim=True)
+kern_postdiapause = LnormPDF(to_x, 
+                                mu_postdiapause, 
+                                sigma_postdiapause)
+kern_postdiapause = (kern_postdiapause 
+                        / torch.sum(kern_postdiapause, 
+                                    dim=0, keepdim=True))
+
 
 ###########
 # L1 kernel
