@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 ############################################
 def LnormPDF(x, mu, sigma):
     """Compute the log-normal pdf based on x and a list of mulog/sigmalog."""
+    mu = mu + 0.001
     return (1
             / (x
                * torch.log(sigma)
