@@ -415,3 +415,15 @@ def apply_mortality(tensor, mortality):
     return tensor*(1-mortality)
 
 # Starvation of L1 instars prior to finding food
+preincrease = torch.tensor(7.20292573)
+changepoint = torch.tensor(14.22353787)
+slope = torch.tensor(1.53550927)
+days = torch.tensor(3)
+
+def calc_starvation(temp):
+    return (((temp < changepoint)
+              * preincrease)
+            + ((temp > changepoint)
+               * (slope
+                  * (temp - changepoint) 
+                  + preincrease)))
