@@ -73,15 +73,21 @@ if __name__ == '__main__':
     # pop1 = torch.reshape(pop1, SpongyMothIPM.shape)
     # tensor2d_imshow(pop0.detach(), SpongyMothIPM.n_bins)
     # tensor2d_imshow(pop1.detach(), SpongyMothIPM.n_bins)
+
+
     # pop = SpongyMothIPM.LnormPDF(SpongyMothIPM.xs, torch.tensor(0.2), torch.tensor(1.1))
     # project_plot(SpongyMothIPM.kern_postdiapause.detach(), 
     #              pop, 
     #              SpongyMothIPM.xs, 
     #              10)
+
+
     # tensor4d_to_2d_imshow(
-    #     SpongyMothIPM.kern_diapause.detach(),
+    #     SpongyMothIPM.kern_diapause_4D.detach(),
     #     100,
     #     (0, 1),
     #     (20, 20),
     #     ("I", "D"))
-    tensor2d_imshow(SpongyMothIPM.kern_prediapause.detach(), SpongyMothIPM.n_bins)
+
+    tensor2d_imshow(SpongyMothIPM.kern_L1.detach(), SpongyMothIPM.n_bins)
+    print(SpongyMothIPM.mu_D_diapause)
