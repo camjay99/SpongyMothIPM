@@ -2,19 +2,25 @@ import matplotlib.pyplot as plt
 import torch
 
 import SpongyMothIPM
+import trial 
 
-def tensor2d_imshow(tensor, n_bins):
+def tensor2d_imshow(tensor, n_bins, xmin, xmax):
     """Takes a 2d tensor and displays it as a heatmap."""
     fig, ax = plt.subplots()
 
-    im = ax.imshow(tensor)
-    fig.colorbar(im, cmap='Reds')
-    ax.set_ylim(-0.5, n_bins-0.5)
+    im = ax.imshow(tensor, cmap='Reds')
+    fig.colorbar(im)
+    ax.plot([-0.5, n_bins-0.5], [-0.5, n_bins-0.5], color='blue', zorder=2)
+    ax.set_ylim(n_bins-0.5, -0.5)
     ax.set_xlim(-0.5, n_bins-0.5)
+
+    positions = list(range(0, n_bins, 20))
+    labels = [f"{i/n_bins*(xmax-xmin)+xmin:.2f}" for i in positions]
+    ax.set_xticks(positions, labels)
 
     plt.show()
 
-def tensor4d_to_2d_imshow(tensor, n_bins, sample_dims, sample_rates, dim_names):
+def tensor4d_to_2d_imshow(tensor, n_bins, sample_dims, sample_rates, dim_names, one_to_one=False):
     """Takes a 4d tensor and displays 2d slices as a heatmap."""
     if len(sample_dims) != len(sample_rates):
         raise Exception("sample_dims and sample_rates "
@@ -41,13 +47,15 @@ def tensor4d_to_2d_imshow(tensor, n_bins, sample_dims, sample_rates, dim_names):
             slice = slice.reshape((n_bins, n_bins))
             axes[i, j].imshow(slice, cmap='Reds')
             axes[i, j].scatter(i*sample_rates[1], j*sample_rates[0], color='black', s=5)
-            axes[i, j].set_xticks([])
-            axes[i, j].set_yticks([])
-            axes[i, j].set_ylim([-0.5, n_bins-0.5])
+            # axes[i, j].set_xticks([])
+            # axes[i, j].set_yticks([])
+            axes[i, j].set_ylim([n_bins-0.5, -0.5])
             if j == 0:
                 axes[i, j].set_ylabel(f"{dim_names[0]} = {i*sample_rates[0]}")
             if i == n_rows-1:
                 axes[i, j].set_xlabel(f"{dim_names[1]} = {j*sample_rates[1]}")
+            if one_to_one:
+                axes[i, j].plot([-0.5, n_bins-0.5], [-0.5, n_bins-0.5], color='blue', zorder=2)
 
     plt.show()
 
@@ -81,13 +89,16 @@ if __name__ == '__main__':
     #              SpongyMothIPM.xs, 
     #              10)
 
-
+    # print(SpongyMothIPM.mu_I_diapause)
+    # test_dist = trial.kern_test.expand(100, 100, 100,100)
     # tensor4d_to_2d_imshow(
-    #     SpongyMothIPM.kern_diapause_4D.detach(),
+    #     test_dist.detach(),
     #     100,
-    #     (0, 1),
+    #     (1, 3),
     #     (20, 20),
-    #     ("I", "D"))
+    #     ("I", "D"),
+    #     one_to_one=True)
 
-    tensor2d_imshow(SpongyMothIPM.kern_L1.detach(), SpongyMothIPM.n_bins)
-    print(SpongyMothIPM.mu_D_diapause)
+    tensor2d_imshow(SpongyMothIPM.kern_adult.detach(), SpongyMothIPM.n_bins,
+                    SpongyMothIPM.min_x,
+                    SpongyMothIPM.max_x)
