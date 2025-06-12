@@ -1,0 +1,15 @@
+[build-system]
+build-backend = 'mesonpy'
+requires = ['meson-python']
+
+[project]
+name = 'SpongyMothIPM'
+version = '0.0.1'
+readme = 'README.md'
+requires-python = '>=3.9'
+license = {file = 'LICENSE.txt'}
+authors = [
+    {name = 'Cameron Scholl', email = 'cjc378@cornell.edu'},
+    {name = 'Chonggang Xu', email = 'cxu@lanl.gov'},
+    {name = 'Zachary Robbins', email = 'zjrobbins@lanl.gov'}
+]
