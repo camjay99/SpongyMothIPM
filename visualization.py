@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 import torch
 
-import SpongyMothIPM
+import SpongyMothIPM.SpongyMothIPM as SpongyMothIPM
 import trial 
 
 def tensor2d_imshow(tensor, n_bins, xmin, xmax):

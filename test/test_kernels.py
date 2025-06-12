@@ -1,7 +1,7 @@
 import torch
 import pytest
 
-import SpongyMothIPM
+import SpongyMothIPM.SpongyMothIPM as SpongyMothIPM
 
 ##################
 # Eigenvalue Tests
