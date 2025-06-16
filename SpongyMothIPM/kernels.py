@@ -2,7 +2,16 @@ import torch
 
 import SpongyMothIPM.util as util
 
-class Prediapause():
+class LifeStage():
+    def init_pop(self, position, scale):
+        self.pop = util.LnormPDF(self.config.xs, 
+                                 torch.tensor(position), 
+                                 torch.tensor(scale))
+        
+    def apply_mortality(self):
+        self.pop *= 1 - self.mortality
+
+class Prediapause(LifeStage):
     def __init__(self, config):
         self.config = config
 
@@ -16,6 +25,9 @@ class Prediapause():
         self.sigma = torch.tensor(3, 
                                   dtype=self.config.dtype, 
                                   requires_grad=True)
+        self.mortality = torch.tensor(0.1, 
+                                      dtype=self.config.dtype,
+                                      requires_grad=True)
 
     def build_kernel(self, temp):
         mu = (
@@ -33,7 +45,7 @@ class Prediapause():
         return kernel
     
 
-class Diapause():
+class Diapause(LifeStage):
     def __init__(self, config):
         self.config = config
 
@@ -61,6 +73,9 @@ class Diapause():
         self.sigma_D = torch.tensor(3, 
                                     dtype=self.config.dtype, 
                                     requires_grad=True)
+        self.mortality = torch.tensor(0.1, 
+                                      dtype=config.dtype, 
+                                      requires_grad=True)
 
     def build_kernel(self, temp, twoD=True):
         # Current strategy is to compute as a 4-D tensor to take advantage of broadcasting, then to 
@@ -111,9 +126,18 @@ class Diapause():
             return kernel_2D
         else:
             return kernel_4D
-        
+    
+    def init_pop(self, position_I, scale_I, position_D, scale_D):
+        pop_I = util.LnormPDF(self.config.from_x, 
+                              torch.tensor(position_I), 
+                              torch.tensor(scale_I))
+        pop_D = util.LnormPDF(self.config.to_x, 
+                              torch.tensor(position_D), 
+                              torch.tensor(scale_D))
+        self.pop = torch.flatten(pop_I * pop_D)
 
-class Postdiapause():
+
+class Postdiapause(LifeStage):
     def __init__(self, config):
         self.config = config
 
@@ -129,6 +153,9 @@ class Postdiapause():
         self.sigma = torch.tensor(1.1, 
                                   dtype=self.config.dtype, 
                                   requires_grad=True)
+        self.mortality = torch.tensor(0.1, 
+                                      dtype=self.config.dtype, 
+                                      requires_grad=True)
         
     def build_kernel(self, temp):
         mu = (
@@ -141,9 +168,9 @@ class Postdiapause():
                       + self.zeta*temp**3)))) # a_T * A
         kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
         return kernel
+    
 
-
-class FirstInstar():
+class FirstInstar(LifeStage):
     def __init__(self, config):
         self.config = config
 
@@ -155,9 +182,12 @@ class FirstInstar():
         self.crit_temp_width = torch.tensor(12.65)
 
         ## Optimized Parameters
-        self.sigma_L1 = torch.tensor(3, 
-                                     dtype=self.config.dtype, 
-                                     requires_grad=True)
+        self.sigma = torch.tensor(3, 
+                                  dtype=self.config.dtype, 
+                                  requires_grad=True)
+        self.mortality = torch.tensor(0.7, 
+                                      dtype=self.config.dtype, 
+                                      requires_grad=True)
         
     def build_kernel(self, temp):
         mu = (
@@ -171,8 +201,9 @@ class FirstInstar():
                              10))
         kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
         return kernel
+    
 
-class SecondInstar():
+class SecondInstar(LifeStage):
     def __init__(self, config):
         self.config = config
 
@@ -186,6 +217,9 @@ class SecondInstar():
         self.sigma = torch.tensor(3, 
                                   dtype=self.config.dtype, 
                                   requires_grad=True)
+        self.mortality = torch.tensor(0.7, 
+                                      dtype=self.config.dtype, 
+                                      requires_grad=True)
         
     def build_kernel(self, temp):
         mu = (
@@ -199,7 +233,8 @@ class SecondInstar():
         kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
         return kernel
     
-class ThirdInstar():
+    
+class ThirdInstar(LifeStage):
     def __init__(self, config):
         self.config = config
 
@@ -214,6 +249,9 @@ class ThirdInstar():
         self.sigma = torch.tensor(3, 
                                   dtype=self.config.dtype, 
                                   requires_grad=True)
+        self.mortality = torch.tensor(0.7, 
+                                      dtype=self.config.dtype, 
+                                      requires_grad=True)
         
     def build_kernel(self, temp):
         mu = (
@@ -228,7 +266,8 @@ class ThirdInstar():
         kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
         return kernel
 
-class FourthInstar():
+
+class FourthInstar(LifeStage):
     def __init__(self, config):
         self.config = config
 
@@ -242,6 +281,9 @@ class FourthInstar():
         self.sigma = torch.tensor(3, 
                                   dtype=self.config.dtype, 
                                   requires_grad=True)
+        self.mortality = torch.tensor(0.7, 
+                                      dtype=self.config.dtype, 
+                                      requires_grad=True)
         
     def build_kernel(self, temp):
         mu = (
@@ -255,7 +297,8 @@ class FourthInstar():
         kernel = self.LnormPDF(self.config.x_dif, mu, self.sigma)
         return kernel
 
-class FemaleFifthSixthInstar():
+
+class FemaleFifthSixthInstar(LifeStage):
     def __init__(self, config):
         self.config = config
 
@@ -271,6 +314,9 @@ class FemaleFifthSixthInstar():
         self.sigma = torch.tensor(3, 
                                   dtype=self.config.dtype, 
                                   requires_grad=True)
+        self.mortality = torch.tensor(0.7, 
+                                      dtype=self.config.dtype, 
+                                      requires_grad=True)
         
     def build_kernel(self, temp): 
         ## Compute kernel
@@ -282,8 +328,9 @@ class FemaleFifthSixthInstar():
                   * temp)))
         kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
         return kernel
+
     
-class MaleFifthInstar():
+class MaleFifthInstar(LifeStage):
     def __init__(self, config):
         self.config = config
 
@@ -299,6 +346,9 @@ class MaleFifthInstar():
         self.sigma = torch.tensor(3, 
                                   dtype=self.config.dtype, 
                                   requires_grad=True)
+        self.mortality = torch.tensor(0.7, 
+                                      dtype=self.config.dtype, 
+                                      requires_grad=True)
         
     def build_kernel(self, temp):
         ## Compute kernel
@@ -311,7 +361,8 @@ class MaleFifthInstar():
         kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
         return kernel
 
-class FemalePupae():
+
+class FemalePupae(LifeStage):
     def __init__(self, config):
         self.config = config
 
@@ -323,6 +374,9 @@ class FemalePupae():
         self.sigma = torch.tensor(3, 
                                   dtype=self.config.dtype, 
                                   requires_grad=True)
+        self.mortality = torch.tensor(0.4, 
+                                      dtype=self.config.dtype, 
+                                      requires_grad=True)
 
     def build_kernel(self, config):
         ## Calculate kernel
@@ -334,7 +388,8 @@ class FemalePupae():
         kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
         return kernel
     
-class MalePupae():
+    
+class MalePupae(LifeStage):
     def __init__(self, config):
         self.config = config
 
@@ -346,6 +401,9 @@ class MalePupae():
         self.sigma = torch.tensor(3, 
                                   dtype=self.config.dtype, 
                                   requires_grad=True)
+        self.mortality = torch.tensor(0.1, 
+                                      dtype=self.config.dtype, 
+                                      requires_grad=True)
 
     def build_kernel(self, temp):
         ## Calculate kernel
@@ -357,7 +415,8 @@ class MalePupae():
         kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
         return kernel
     
-class Adult():
+    
+class Adult(LifeStage):
     def __init__(self, config):
         self.config = config
 
