@@ -20,18 +20,18 @@ temp = 15
 # Model Driver
 ##############
 
-prediapause = kernels.Prediapause(config)
-diapause = kernels.Diapause(config)
-postdiapause = kernels.Postdiapause(config)
-first_instar = kernels.FirstInstar(config)
-second_instar = kernels.SecondInstar(config)
-third_instar = kernels.ThirdInstar(config)
-fourth_instar = kernels.FourthInstar(config)
-male_late_instar = kernels.MaleFifthInstar(config)
-female_late_instar = kernels.FemaleFifthSixthInstar(config)
-male_pupae = kernels.MalePupae(config)
-female_pupae = kernels.FemalePupae(config)
-adults = kernels.Adult(config)
+prediapause = kernels.Prediapause(config).init_pop(0.2, 1.1)
+diapause = kernels.Diapause(config).init_pop(0.2, 1.1)
+postdiapause = kernels.Postdiapause(config).init_pop(0.2, 1.1)
+first_instar = kernels.FirstInstar(config).init_pop(0.2, 1.1)
+second_instar = kernels.SecondInstar(config).init_pop(0.2, 1.1)
+third_instar = kernels.ThirdInstar(config).init_pop(0.2, 1.1)
+fourth_instar = kernels.FourthInstar(config).init_pop(0.2, 1.1)
+male_late_instar = kernels.MaleFifthInstar(config).init_pop(0.2, 1.1)
+female_late_instar = kernels.FemaleFifthSixthInstar(config).init_pop(0.2, 1.1)
+male_pupae = kernels.MalePupae(config).init_pop(0.2, 1.1)
+female_pupae = kernels.FemalePupae(config).init_pop(0.2, 1.1)
+adults = kernels.Adult(config).init_pop(0.2, 1.1)
 
 for day in range(num_days):
     transfers = prediapause.run_one_step(temp)
@@ -46,3 +46,4 @@ for day in range(num_days):
     transfers = female_late_instar.run_one_step(temp, transfers_dif/2)
     to_adult += female_pupae.run_one_step(temp, transfers)
     transfers = adults.run_one_step(temp, to_adult)
+    prediapause.add_transfers(transfers)

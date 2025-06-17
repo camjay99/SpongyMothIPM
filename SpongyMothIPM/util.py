@@ -19,14 +19,16 @@ def LnormPDF(x, mu, sigma):
 
 def Logan_TM1(temp, psi, rho, t_max, crit_temp_width, tbase=0):
     tau = (t_max - temp + tbase) / crit_temp_width
-    return (psi
-            * (torch.exp(rho*(temp - tbase)) 
-                - torch.exp(rho*t_max - tau)))
+    return torch.maximum(torch.tensor(0),
+                         (psi
+                          * (torch.exp(rho*(temp - tbase)) 
+                             - torch.exp(rho*t_max - tau))))
 
 def Logan_TM2(temp, alpha, kappa, rho, t_max, crit_temp_width, tbase=0):
     tau = (t_max - temp + tbase) / crit_temp_width
-    return (alpha
-            * ((1 + kappa
-                * torch.exp(
-                   -rho * (temp-tbase)))**-1
-                - torch.exp(-tau)))
+    return torch.maximum(torch.tensor(0),
+                         (alpha
+                          * ((1 + kappa
+                              * torch.exp(
+                                -rho * (temp-tbase)))**-1
+                                - torch.exp(-tau))))

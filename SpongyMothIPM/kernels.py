@@ -2,16 +2,35 @@ import torch
 
 import SpongyMothIPM.util as util
 
-class LifeStage():
+class _LifeStage():
     def init_pop(self, position, scale):
         self.pop = util.LnormPDF(self.config.xs, 
                                  torch.tensor(position), 
                                  torch.tensor(scale))
         
+    def grow_pop(self, temp):
+        kernel = self.build_kernel(temp)
+        self.pop = kernel @ self.pop
+
     def apply_mortality(self):
         self.pop *= 1 - self.mortality
 
-class Prediapause(LifeStage):
+    def get_transfers(self):
+        transfers = torch.sum(self.pop*self.config.xs_for_transfer)
+        self.pop *= ~self.config.xs_for_transfer
+        return transfers
+        
+    def add_transfers(self, transfers):
+        self.pop += transfers*self.config.input_xs
+
+    def run_one_step(self, temp, incoming=0):
+        self.apply_mortality()
+        self.grow_pop(temp)
+        outgoing = self.get_transfers
+        self.add_transfers(incoming)
+
+
+class Prediapause(_LifeStage):
     def __init__(self, config):
         self.config = config
 
@@ -45,7 +64,7 @@ class Prediapause(LifeStage):
         return kernel
     
 
-class Diapause(LifeStage):
+class Diapause(_LifeStage):
     def __init__(self, config):
         self.config = config
 
@@ -136,8 +155,20 @@ class Diapause(LifeStage):
                               torch.tensor(scale_D))
         self.pop = torch.flatten(pop_I * pop_D)
 
+    def get_transfers_diapause(self):
+        pop_2D = torch.reshape(self.pop, config.shape)
+        transfers = torch.sum(pop_2D*self.config.grid2d_for_transfer)
+        pop_2D *= ~self.config.grid2d_for_transfer
+        self.pop = torch.flatten(pop_2D)
+        return transfers
 
-class Postdiapause(LifeStage):
+    def add_transfers_diapause(self, transfers):
+        pop_2D = torch.reshape(self.pop, self.config.shape)
+        pop_2D += transfers*self.config.input_xs
+        self.pop = torch.flatten(pop_2D)
+
+
+class Postdiapause(_LifeStage):
     def __init__(self, config):
         self.config = config
 
@@ -148,6 +179,11 @@ class Postdiapause(LifeStage):
         self.kappa = torch.tensor(0.01298)
         self.psi = torch.tensor(0.00099)
         self.zeta = torch.tensor(-0.00004)
+        # Starvation of L1 instars prior to finding food
+        # Based on Hunter 1993
+        self.preincrease = torch.tensor(7.20292573)
+        self.changepoint = torch.tensor(14.22353787)
+        self.slope = torch.tensor(1.53550927)
 
         ## Optimized Parameters
         self.sigma = torch.tensor(1.1, 
@@ -169,8 +205,16 @@ class Postdiapause(LifeStage):
         kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
         return kernel
     
+    def calc_starvation(self, temp):
+        return (((temp < self.changepoint)
+                * self.preincrease)
+                + ((temp > self.changepoint)
+                * (self.slope
+                    * (temp - self.changepoint) 
+                    + self.preincrease)))
+        
 
-class FirstInstar(LifeStage):
+class FirstInstar(_LifeStage):
     def __init__(self, config):
         self.config = config
 
@@ -203,7 +247,7 @@ class FirstInstar(LifeStage):
         return kernel
     
 
-class SecondInstar(LifeStage):
+class SecondInstar(_LifeStage):
     def __init__(self, config):
         self.config = config
 
@@ -234,7 +278,7 @@ class SecondInstar(LifeStage):
         return kernel
     
     
-class ThirdInstar(LifeStage):
+class ThirdInstar(_LifeStage):
     def __init__(self, config):
         self.config = config
 
@@ -267,7 +311,7 @@ class ThirdInstar(LifeStage):
         return kernel
 
 
-class FourthInstar(LifeStage):
+class FourthInstar(_LifeStage):
     def __init__(self, config):
         self.config = config
 
@@ -298,17 +342,15 @@ class FourthInstar(LifeStage):
         return kernel
 
 
-class FemaleFifthSixthInstar(LifeStage):
+class FemaleFifthSixthInstar(_LifeStage):
     def __init__(self, config):
         self.config = config
 
         ## Assumed Parameters
-        self.b = torch.tensor(-0.0132)
-        self.m = torch.tensor(0.00162)
-        # m/b from average model over all larval stages, 
-        # here we rescale be the approximate proportion 
-        # of time spent in 5th/6th instars
-        self.scaling = torch.tensor(650/326)
+        self.psi = torch.tensor(0.18496921)
+        self.rho = torch.tensor(0.14727929)
+        self.t_max = torch.tensor(36.50535344)
+        self.crit_temp_width = torch.tensor(6.76039768)
 
         ## Optimized Parameters
         self.sigma = torch.tensor(3, 
@@ -319,28 +361,27 @@ class FemaleFifthSixthInstar(LifeStage):
                                       requires_grad=True)
         
     def build_kernel(self, temp): 
-        ## Compute kernel
         mu = (
             self.config.delta_t 
-            * (self.b 
-               + (self.m
-                  * self.scaling
-                  * temp)))
+            * util.Logan_TM1(temp, 
+                             self.psi, 
+                             self.rho, 
+                             self.t_max, 
+                             self.crit_temp_width, 
+                             0))
         kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
         return kernel
 
     
-class MaleFifthInstar(LifeStage):
+class MaleFifthInstar(_LifeStage):
     def __init__(self, config):
         self.config = config
 
         ## Assumed Parameters
-        self.b = torch.tensor(-0.0127)
-        self.m = torch.tensor(0.00177)
-        # m/b from average model over all larval stages, 
-        # here we rescale be the approximate proportion 
-        # of time spent in 5th instars
-        self.scaling = torch.tensor(583/240)
+        self.psi = torch.tensor(0.1701305)
+        self.rho = torch.tensor(0.14787517)
+        self.t_max = torch.tensor(36.24067684)
+        self.crit_temp_width = torch.tensor(6.71654206)
 
         ## Optimized Parameters
         self.sigma = torch.tensor(3, 
@@ -351,24 +392,27 @@ class MaleFifthInstar(LifeStage):
                                       requires_grad=True)
         
     def build_kernel(self, temp):
-        ## Compute kernel
         mu = (
-            self.config.delta_t
-            * (self.b 
-               + (self.m
-                  * self.scaling
-                  * temp)))
+            self.config.delta_t 
+            * util.Logan_TM1(temp, 
+                             self.psi, 
+                             self.rho, 
+                             self.t_max, 
+                             self.crit_temp_width, 
+                             0))
         kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
         return kernel
 
 
-class FemalePupae(LifeStage):
+class FemalePupae(_LifeStage):
     def __init__(self, config):
         self.config = config
 
         ## Assumed Parameters
-        self.b = torch.tensor(-0.0217)
-        self.m = torch.tensor(0.00427)
+        self.psi = torch.tensor(2.00490155e-02)
+        self.rho = torch.tensor(5.70991497e-02)
+        self.t_max = torch.tensor(3.29603231e+01)
+        self.crit_temp_width = torch.tensor(6.24241402e-01)
 
         ## Optimized Parameters
         self.sigma = torch.tensor(3, 
@@ -378,22 +422,30 @@ class FemalePupae(LifeStage):
                                       dtype=self.config.dtype, 
                                       requires_grad=True)
 
-    def build_kernel(self, config):
-        ## Calculate kernel
+    def build_kernel(self, temp):
         mu = (
             self.config.delta_t 
-            * (self.b 
-               + (self.m
-                  * self.temp)))
+            * util.Logan_TM1(temp, 
+                             self.psi, 
+                             self.rho, 
+                             self.t_max, 
+                             self.crit_temp_width, 
+                             0))
         kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
         return kernel
     
     
-class MalePupae(LifeStage):
+class MalePupae(_LifeStage):
     def __init__(self, config):
         self.config = config
 
         ## Assumed Parameters
+        self.psi = torch.tensor(1.43475792e-02)
+        self.rho = torch.tensor(6.15004658e-02)
+        self.t_max = torch.tensor(3.34993288e+01)
+        self.crit_temp_width = torch.tensor(9.75671208e-01)
+
+
         self.b = torch.tensor(-0.0238)
         self.m = torch.tensor(0.00362)
 
@@ -416,7 +468,7 @@ class MalePupae(LifeStage):
         return kernel
     
     
-class Adult(LifeStage):
+class Adult(_LifeStage):
     def __init__(self, config):
         self.config = config
 
@@ -437,3 +489,9 @@ class Adult(LifeStage):
                   *(temp-10))))
         kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
         return kernel
+
+    def get_transfers(adult_females):
+        # Basic reproduction function, as we are currently only focusing
+        # on early season synchrony. Future versions can include more
+        # robust reproduction.
+        return 2*_LifeStage.get_transfers()
