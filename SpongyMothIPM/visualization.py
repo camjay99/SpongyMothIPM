@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 import torch
 
-import SpongyMothIPM.SpongyMothIPM as SpongyMothIPM
+import SpongyMothIPM.main as main
 import trial 
 
 def tensor2d_imshow(tensor, n_bins, xmin, xmax):
@@ -99,6 +99,6 @@ if __name__ == '__main__':
     #     ("I", "D"),
     #     one_to_one=True)
 
-    tensor2d_imshow(SpongyMothIPM.kern_adult.detach(), SpongyMothIPM.n_bins,
-                    SpongyMothIPM.min_x,
-                    SpongyMothIPM.max_x)
+    tensor2d_imshow(main.kern_adult.detach(), main.n_bins,
+                    main.min_x,
+                    main.max_x)

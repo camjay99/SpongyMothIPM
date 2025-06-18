@@ -20,19 +20,30 @@ class _LifeStage():
         self.pop *= ~self.config.xs_for_transfer
         return transfers
         
-    def add_transfers(self, transfers):
+    def add_transfers(self, transfers=0):
         self.pop += transfers*self.config.input_xs
 
-    def run_one_step(self, temp, incoming=0):
+    def run_one_step(self, temps, incoming=0):
+        if self.save:
+            self.save_pop()
         self.apply_mortality()
-        self.grow_pop(temp)
-        outgoing = self.get_transfers
+        self.grow_pop(temps)
+        outgoing = self.get_transfers()
         self.add_transfers(incoming)
+        return outgoing
+
+    def save_pop(self):
+        self.abundances.append(torch.sum(self.pop))
+        self.hist_pops.append(self.pop.detach().clone())
 
 
 class Prediapause(_LifeStage):
-    def __init__(self, config):
+    def __init__(self, config, save=False):
         self.config = config
+        self.save = save
+        if save:
+            self.abundances = []
+            self.hist_pops = []
 
         ## Assumed Parameters
         self.rho = torch.tensor(0.1455)
@@ -48,7 +59,7 @@ class Prediapause(_LifeStage):
                                       dtype=self.config.dtype,
                                       requires_grad=True)
 
-    def build_kernel(self, temp):
+    def calc_mu(self, temp):
         mu = (
             self.config.delta_t
             * util.Logan_TM1(temp, 
@@ -56,17 +67,23 @@ class Prediapause(_LifeStage):
                              self.rho, 
                              self.t_max, 
                              self.crit_temp_width))
-        kernel = (
-            util.LnormPDF(
-                self.config.x_dif, 
-                mu, 
-                self.sigmasigma_prediapause))
+        return mu
+
+    def build_kernel(self, temps):
+        mu = torch.tensor(0)
+        for temp in temps:
+            mu += self.calc_mu(self, temp)
+        kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
         return kernel
     
 
 class Diapause(_LifeStage):
-    def __init__(self, config):
+    def __init__(self, config, save=False):
         self.config = config
+        self.save = save
+        if save:
+            self.abundances = []
+            self.hist_pops = []
 
         ## Assumed Parameters
         self.c = torch.tensor(-5.627108200)
@@ -96,11 +113,7 @@ class Diapause(_LifeStage):
                                       dtype=config.dtype, 
                                       requires_grad=True)
 
-    def build_kernel(self, temp, twoD=True):
-        # Current strategy is to compute as a 4-D tensor to take advantage of broadcasting, then to 
-        # reshape into a 2D matrix to take advantage of matrix multiplication.
-        # To simplify calculations, we keep track of 1-I rather than I, so that
-        # all traits are always increasing.
+    def calc_mu_I(self, temp):
         Z = (self.t_max - temp) / (self.t_max - self.t_min)
         rp = 1 + self.rp_c*(torch.exp(Z)**6)
         rs = self.rs_c + self.rs_rp*rp
@@ -111,12 +124,16 @@ class Diapause(_LifeStage):
                             (torch.log(rp)
                             * ((1 - self.config.from_I) 
                                 - self.I_0 
-                                - rs))))))
+                                - rs)))))
         mu_I = -1*mu_I # dI*/dt = -dI/dt
         # Change is expressed over entire input space, since
         # inhibitor depletion does not depend on development rate
         mu_I = torch.tile(mu_I, (1, self.config.n_bins, 1, 1)) 
 
+        return mu_I
+    
+    def calc_mu_D(self, temp):
+        Z = (self.t_max - temp) / (self.t_max - self.t_min)
         A = 0.3 + 0.7*(1-Z)**(self.A_1 * (Z**self.A_2))
         pdr = torch.exp(self.c 
                         + self.pdr_t*temp 
@@ -126,7 +143,18 @@ class Diapause(_LifeStage):
             self.config.delta_t
             * (torch.maximum(torch.tensor(0),
                             (pdr
-                            * (1 - (1 - self.config.from_I)*A))))))
+                            * (1 - (1 - self.config.from_I)*A)))))
+
+    def build_kernel(self, temps, twoD=True):
+        # Current strategy is to compute as a 4-D tensor to take advantage of broadcasting, then to 
+        # reshape into a 2D matrix to take advantage of matrix multiplication.
+        # To simplify calculations, we keep track of 1-I rather than I, so that
+        # all traits are always increasing.
+        mu_I = torch.tensor(0)
+        mu_D = torch.tensor(0)
+        for temp in temps:
+            mu_I += self.calc_mu_I(self, temp)
+            mu_D += self.calc_mu_D(self, temp)
 
         kernel_4D = (
             util.LnormPDF(self.config.I_dif, mu_I, self.sigma_I)
@@ -155,22 +183,26 @@ class Diapause(_LifeStage):
                               torch.tensor(scale_D))
         self.pop = torch.flatten(pop_I * pop_D)
 
-    def get_transfers_diapause(self):
-        pop_2D = torch.reshape(self.pop, config.shape)
+    def get_transfers(self):
+        pop_2D = torch.reshape(self.pop, self.config.shape)
         transfers = torch.sum(pop_2D*self.config.grid2d_for_transfer)
         pop_2D *= ~self.config.grid2d_for_transfer
         self.pop = torch.flatten(pop_2D)
         return transfers
 
-    def add_transfers_diapause(self, transfers):
+    def add_transfers(self, transfers=0):
         pop_2D = torch.reshape(self.pop, self.config.shape)
         pop_2D += transfers*self.config.input_xs
         self.pop = torch.flatten(pop_2D)
 
 
 class Postdiapause(_LifeStage):
-    def __init__(self, config):
+    def __init__(self, config, save=False):
         self.config = config
+        self.save = save
+        if save:
+            self.abundances = []
+            self.hist_pops = []
 
         ## Assumed Parameters
         self.tau = torch.tensor(-0.0127)
@@ -192,16 +224,22 @@ class Postdiapause(_LifeStage):
         self.mortality = torch.tensor(0.1, 
                                       dtype=self.config.dtype, 
                                       requires_grad=True)
-        
-    def build_kernel(self, temp):
+    
+    def calc_mu(self, temp):
         mu = (
             self.config.delta_t
             * (self.tau + self.delta*temp # R_T(0)
-                + (self.configfrom_x
+                + (self.config.from_x
                    * (self.omega 
                       + self.kappa*temp 
                       + self.psi*temp**2 
                       + self.zeta*temp**3)))) # a_T * A
+        return mu
+    
+    def build_kernel(self, temps):
+        mu = torch.tensor(0)
+        for temp in temps:
+            mu += self.calc_mu(self, temp)
         kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
         return kernel
     
@@ -215,8 +253,12 @@ class Postdiapause(_LifeStage):
         
 
 class FirstInstar(_LifeStage):
-    def __init__(self, config):
+    def __init__(self, config, save=False):
         self.config = config
+        self.save = save
+        if save:
+            self.abundances = []
+            self.hist_pops = []
 
         ## Assumed parameters
         self.alpha = torch.tensor(0.9643)
@@ -233,7 +275,7 @@ class FirstInstar(_LifeStage):
                                       dtype=self.config.dtype, 
                                       requires_grad=True)
         
-    def build_kernel(self, temp):
+    def calc_mu(self, temp):
         mu = (
             self.config.delta_t
             * util.Logan_TM2(temp, 
@@ -243,13 +285,23 @@ class FirstInstar(_LifeStage):
                              self.t_max, 
                              self.crit_temp_width, 
                              10))
+        return mu
+
+    def build_kernel(self, temps):
+        mu = torch.tensor(0)
+        for temp in temps:
+            mu += self.calc_mu(self, temp)
         kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
         return kernel
     
 
 class SecondInstar(_LifeStage):
-    def __init__(self, config):
+    def __init__(self, config, save=False):
         self.config = config
+        self.save = save
+        if save:
+            self.abundances = []
+            self.hist_pops = []
 
         ## Assumed parameters
         self.psi = torch.tensor(0.1454)
@@ -264,8 +316,8 @@ class SecondInstar(_LifeStage):
         self.mortality = torch.tensor(0.7, 
                                       dtype=self.config.dtype, 
                                       requires_grad=True)
-        
-    def build_kernel(self, temp):
+    
+    def calc_mu(self, temp):
         mu = (
             self.config.delta_t
             * util.Logan_TM1(temp, 
@@ -274,13 +326,23 @@ class SecondInstar(_LifeStage):
                              self.t_max, 
                              self.crit_temp_width, 
                              13.3))
+        return mu
+    
+    def build_kernel(self, temps):
+        mu = torch.tensor(0)
+        for temp in temps:
+            mu += self.calc_mu(self, temp)
         kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
         return kernel
     
     
 class ThirdInstar(_LifeStage):
-    def __init__(self, config):
+    def __init__(self, config, save=False):
         self.config = config
+        self.save = save
+        if save:
+            self.abundances = []
+            self.hist_pops = []
 
         ## Assumed Parameters
         self.alpha = torch.tensor(1.2039)
@@ -296,8 +358,8 @@ class ThirdInstar(_LifeStage):
         self.mortality = torch.tensor(0.7, 
                                       dtype=self.config.dtype, 
                                       requires_grad=True)
-        
-    def build_kernel(self, temp):
+    
+    def calc_mu(self, temp):
         mu = (
             self.config.delta_t
             * util.Logan_TM2(temp, 
@@ -307,13 +369,23 @@ class ThirdInstar(_LifeStage):
                              self.t_max, 
                              self.crit_temp_width, 
                              13.3))
+        return mu
+
+    def build_kernel(self, temps):
+        mu = torch.tensor(0)
+        for temp in temps:
+            mu += self.calc_mu(self, temp)
         kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
         return kernel
 
 
 class FourthInstar(_LifeStage):
-    def __init__(self, config):
+    def __init__(self, config, save=False):
         self.config = config
+        self.save = save
+        if save:
+            self.abundances = []
+            self.hist_pops = []
 
         ## Assumed Parameters
         self.psi = torch.tensor(0.1120)
@@ -328,8 +400,8 @@ class FourthInstar(_LifeStage):
         self.mortality = torch.tensor(0.7, 
                                       dtype=self.config.dtype, 
                                       requires_grad=True)
-        
-    def build_kernel(self, temp):
+    
+    def calc_mu(self, temp):
         mu = (
             self.config.delta_t 
             * util.Logan_TM1(temp, 
@@ -338,13 +410,23 @@ class FourthInstar(_LifeStage):
                              self.t_max, 
                              self.crit_temp_width, 
                              13.3))
-        kernel = self.LnormPDF(self.config.x_dif, mu, self.sigma)
+        return mu
+
+    def build_kernel(self, temps):
+        mu = torch.tensor(0)
+        for temp in temps:
+            mu += self.calc_mu(self, temp)
+        kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
         return kernel
 
 
 class FemaleFifthSixthInstar(_LifeStage):
-    def __init__(self, config):
+    def __init__(self, config, save=False):
         self.config = config
+        self.save = save
+        if save:
+            self.abundances = []
+            self.hist_pops = []
 
         ## Assumed Parameters
         self.psi = torch.tensor(0.18496921)
@@ -359,8 +441,8 @@ class FemaleFifthSixthInstar(_LifeStage):
         self.mortality = torch.tensor(0.7, 
                                       dtype=self.config.dtype, 
                                       requires_grad=True)
-        
-    def build_kernel(self, temp): 
+    
+    def calc_mu(self, temp):
         mu = (
             self.config.delta_t 
             * util.Logan_TM1(temp, 
@@ -369,13 +451,23 @@ class FemaleFifthSixthInstar(_LifeStage):
                              self.t_max, 
                              self.crit_temp_width, 
                              0))
+        return mu
+
+    def build_kernel(self, temps): 
+        mu = torch.tensor(0)
+        for temp in temps:
+            mu += self.calc_mu(self, temp)
         kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
         return kernel
 
     
 class MaleFifthInstar(_LifeStage):
-    def __init__(self, config):
+    def __init__(self, config, save=False):
         self.config = config
+        self.save = save
+        if save:
+            self.abundances = []
+            self.hist_pops = []
 
         ## Assumed Parameters
         self.psi = torch.tensor(0.1701305)
@@ -391,7 +483,7 @@ class MaleFifthInstar(_LifeStage):
                                       dtype=self.config.dtype, 
                                       requires_grad=True)
         
-    def build_kernel(self, temp):
+    def calc_mu(self, temp):
         mu = (
             self.config.delta_t 
             * util.Logan_TM1(temp, 
@@ -400,13 +492,22 @@ class MaleFifthInstar(_LifeStage):
                              self.t_max, 
                              self.crit_temp_width, 
                              0))
+
+    def build_kernel(self, temps):
+        mu = torch.tensor(0)
+        for temp in temps:
+            mu += self.calc_mu(self, temp)
         kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
         return kernel
 
 
 class FemalePupae(_LifeStage):
-    def __init__(self, config):
+    def __init__(self, config, save=False):
         self.config = config
+        self.save = save
+        if save:
+            self.abundances = []
+            self.hist_pops = []
 
         ## Assumed Parameters
         self.psi = torch.tensor(2.00490155e-02)
@@ -422,7 +523,7 @@ class FemalePupae(_LifeStage):
                                       dtype=self.config.dtype, 
                                       requires_grad=True)
 
-    def build_kernel(self, temp):
+    def calc_mu(self, temp):
         mu = (
             self.config.delta_t 
             * util.Logan_TM1(temp, 
@@ -431,23 +532,29 @@ class FemalePupae(_LifeStage):
                              self.t_max, 
                              self.crit_temp_width, 
                              0))
+        return mu
+
+    def build_kernel(self, temps):
+        mu = torch.tensor(0)
+        for temp in temps:
+            mu += self.calc_mu(self, temp)
         kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
         return kernel
     
     
 class MalePupae(_LifeStage):
-    def __init__(self, config):
+    def __init__(self, config, save=False):
         self.config = config
+        self.save = save
+        if save:
+            self.abundances = []
+            self.hist_pops = []
 
         ## Assumed Parameters
         self.psi = torch.tensor(1.43475792e-02)
         self.rho = torch.tensor(6.15004658e-02)
         self.t_max = torch.tensor(3.34993288e+01)
         self.crit_temp_width = torch.tensor(9.75671208e-01)
-
-
-        self.b = torch.tensor(-0.0238)
-        self.m = torch.tensor(0.00362)
 
         ## Optimized Parameters
         self.sigma = torch.tensor(3, 
@@ -457,20 +564,32 @@ class MalePupae(_LifeStage):
                                       dtype=self.config.dtype, 
                                       requires_grad=True)
 
-    def build_kernel(self, temp):
-        ## Calculate kernel
+    def calc_mu(self, temp):
         mu = (
             self.config.delta_t 
-            * (self.b 
-               + (self.m
-                  * self.temp)))
+            * util.Logan_TM1(temp, 
+                             self.psi, 
+                             self.rho, 
+                             self.t_max, 
+                             self.crit_temp_width, 
+                             0))
+        return mu
+
+    def build_kernel(self, temps):
+        mu = torch.tensor(0)
+        for temp in temps:
+            mu += self.calc_mu(self, temp)
         kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
         return kernel
     
     
 class Adult(_LifeStage):
-    def __init__(self, config):
+    def __init__(self, config, save=False):
         self.config = config
+        self.save = save
+        if save:
+            self.abundances = []
+            self.hist_pops = []
 
         ## Assumed Parameters
         self.b = torch.tensor(0.062)
@@ -480,13 +599,21 @@ class Adult(_LifeStage):
         self.sigma = torch.tensor(3, 
                                   dtype=self.config.dtype, 
                                   requires_grad=True)
-        
-    def build_method(self, temp):
+        self.mortality = torch.tensor(0.1, 
+                                     dtype=self.config.dtype, 
+                                     requires_grad=True)
+    
+    def calc_mu(self, temp):
         mu = (
             self.config.delta_t 
             * (self.b 
                + (self.m
                   *(temp-10))))
+
+    def build_kernel(self, temps):
+        mu = torch.tensor(0)
+        for temp in temps:
+            mu += self.calc_mu(self, temp)
         kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
         return kernel
 
@@ -494,4 +621,4 @@ class Adult(_LifeStage):
         # Basic reproduction function, as we are currently only focusing
         # on early season synchrony. Future versions can include more
         # robust reproduction.
-        return 2*_LifeStage.get_transfers()
+        return 2*super().get_transfers()

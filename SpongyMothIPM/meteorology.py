@@ -15,14 +15,14 @@ def load_daymet_data(file_path):
     df = pd.read_csv(file_path, header=6)
     return df
 
-def daymet_to_diurnal(df, low_time, high_time, sample_rate, sample_start_time):
+def daymet_to_diurnal(df, low_time, high_time, sample_period, sample_start_time):
     """Take daymet point record and computes diurnal cycle at the specified
        sampling frequency. Assumptions of when the low and high temperatures
        occurred are required. Algorithm will repeat first/last day as 
        necessary to ensure full coverage of provided period (midnight-midnight)."""
-    if 24 % sample_rate != 0:
+    if 24 % sample_period != 0:
         raise Exception('Sampling rate must be a divisor of 24')
-    daily_obs = 24 // sample_rate
+    daily_obs = 24 // sample_period
     min_temps = df['tmin (deg c)'].to_numpy()
     max_temps = df['tmax (deg c)'].to_numpy()
    
@@ -77,8 +77,7 @@ def daymet_to_diurnal(df, low_time, high_time, sample_rate, sample_start_time):
 
     # Calculate temps at each daily time point and interleave
     temps = np.zeros((len(min_temps)-1)*daily_obs)
-    for i, time in enumerate(range(sample_start_time, 25, sample_rate)):
-        print(time)
+    for i, time in enumerate(range(sample_start_time, 25, sample_period)):
         if (time >= start) and (time < end):
             # Increasing temperature
             temps[i::daily_obs] = (
@@ -114,21 +113,28 @@ def daymet_to_diurnal(df, low_time, high_time, sample_rate, sample_start_time):
             )
     return temps
 
+def calc_GDD(temps, sample_period, day):
+    start = day*(24%sample_period)
+    GDD = 0
+    for i in range(24%sample_period):
+        GDD += temps[start+i]*sample_period/24
+    return GDD
+
 
 if __name__ == '__main__':
     df = load_daymet_data('./data/11752_lat_41.7074_lon_-77.0846_2025-06-11_123955.csv')
     low_time = 20
     high_time = 10
-    sample_rate = 1
+    sample_period = 1
     sample_start_time = 1
     temps = daymet_to_diurnal(df, 
                               low_time, 
                               high_time, 
-                              sample_rate, 
+                              sample_period, 
                               sample_start_time)
     print(temps[40:120])
     fig, ax = plt.subplots()
-    xs = [sample_start_time + (sample_rate)*x for x in range(len(temps))]
+    xs = [sample_start_time + (sample_period)*x for x in range(len(temps))]
     ax.plot(xs, temps, color='black')
     ax.scatter(list(range(low_time, 24*len(df)+low_time, 24)), df['tmin (deg c)'], color='blue')
     ax.scatter(list(range(high_time, 24*len(df)+high_time, 24)), df['tmax (deg c)'], color='red')
