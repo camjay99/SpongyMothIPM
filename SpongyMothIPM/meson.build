@@ -5,6 +5,7 @@ python_sources = [
     'util.py',
     'config.py',
     'kernels.py',
+    'visualization.py'
 ]
 
 python.install_sources(

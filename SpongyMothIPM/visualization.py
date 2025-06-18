@@ -1,8 +1,8 @@
 import matplotlib.pyplot as plt
 import torch
 
-import SpongyMothIPM.main as main
-import trial 
+from SpongyMothIPM.config import Config
+import SpongyMothIPM.kernels as kernels
 
 def tensor2d_imshow(tensor, n_bins, xmin, xmax):
     """Takes a 2d tensor and displays it as a heatmap."""
@@ -72,6 +72,9 @@ def project_plot(kernel, pop, xs, num_gens):
     plt.show()
 
 if __name__ == '__main__':
+    config = Config()
+
+
     # pop0_I = SpongyMothIPM.LnormPDF(SpongyMothIPM.from_x, torch.tensor(0.2), torch.tensor(1.1))
     # pop0_D = SpongyMothIPM.LnormPDF(SpongyMothIPM.to_x, torch.tensor(0.4), torch.tensor(1.1))
     # kern_test = torch.nan_to_num(SpongyMothIPM.kern_diapause_2D)
@@ -89,16 +92,19 @@ if __name__ == '__main__':
     #              SpongyMothIPM.xs, 
     #              10)
 
-    # print(SpongyMothIPM.mu_I_diapause)
-    # test_dist = trial.kern_test.expand(100, 100, 100,100)
+    # stage = kernels.Diapause(config)
+    # kernel = stage.build_kernel([10.0], twoD=False).detach()
     # tensor4d_to_2d_imshow(
-    #     test_dist.detach(),
+    #     kernel,
     #     100,
-    #     (1, 3),
+    #     (2, 3),
     #     (20, 20),
     #     ("I", "D"),
     #     one_to_one=True)
-
-    tensor2d_imshow(main.kern_adult.detach(), main.n_bins,
-                    main.min_x,
-                    main.max_x)
+    
+    stage = kernels.Prediapause(config)
+    kernel = stage.build_kernel([15.0]).detach()
+    tensor2d_imshow(kernel, 
+                    config.n_bins,
+                    config.min_x,
+                    config.max_x)

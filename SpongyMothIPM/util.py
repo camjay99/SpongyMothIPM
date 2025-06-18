@@ -7,14 +7,17 @@ def LnormPDF(x, mu, sigma):
     # When x = 0, lognormal pdf will return nan when it should be 0.
     # Therefore, we slightly nudge values first (this helps ensure
     # differentiability, which zeroing the first entry would not do).
+    # When mu = 0, set 1 along the diagonal and rest of value in column
+    # to 0.
     x = x + 0.000000001
-    return (1
+    dist = (1
             / (x
-               * torch.log(sigma)
-               * (math.sqrt(2.0*math.pi)))
+            * torch.log(sigma)
+            * (math.sqrt(2.0*math.pi)))
             * torch.exp(
                 -((torch.log(x)-torch.log(mu))**2)
                 / (2*torch.log(sigma)**2)))
+    return torch.where(torch.isnan(dist), torch.eye(dist.shape[0]), dist)
 
 
 def Logan_TM1(temp, psi, rho, t_max, crit_temp_width, tbase=0):
