@@ -659,11 +659,14 @@ class Adult(_LifeStage):
         mu = torch.tensor(0.0, dtype=self.config.dtype)
         for temp in temps:
             mu += self.calc_mu(temp)
+        print(mu)
         if torch.allclose(mu, torch.tensor(0, dtype=self.config.dtype)):
             kernel = 0*self.config.x_dif
         else:
             kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
+            kernel = util.validate(kernel)
             kernel = kernel / kernel.sum(dim=0, keepdim=True)
+
         return kernel
 
     def get_transfers(adult_females):
