@@ -74,6 +74,7 @@ class Prediapause(_LifeStage):
         for temp in temps:
             mu += self.calc_mu(temp)
         kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
+        print(kernel.sum(dim=0, keepdim=True))
         kernel = util.validate(kernel)
         kernel = kernel / kernel.sum(dim=0, keepdim=True)
         return kernel

@@ -100,16 +100,39 @@ def temp(request):
                            ('female_pupae', 'pop_1D'),
                            ('adult', 'pop_1D')])
 def test_eigenvalue(life_stage, pop, temp, request):
+    """Test if eigenvalue of the projection kernel is 1, indicating
+       that population sizes neither grow nor shrink during
+       individual growth."""
     # Get parametrized fixtures
     life_stage = request.getfixturevalue(life_stage)
     pop = request.getfixturevalue(pop)
     # Run test
     kernel = life_stage.build_kernel([temp]).detach()
     next_pop = kernel @ pop
-    print(next_pop)
     assert torch.sum(pop) == pytest.approx(torch.sum(next_pop))
 
-
+@pytest.mark.parametrize("life_stage",
+                          [('prediapause'),
+                           ('diapause'),
+                           ('postdiapause'),
+                           ('first_instar'),
+                           ('second_instar'),
+                           ('third_instar'),
+                           ('fourth_instar'),
+                           ('male_late_instar'),
+                           ('female_late_instar'),
+                           ('male_pupae'),
+                           ('female_pupae'),
+                           ('adult')])
+def test_lower_triangular(life_stage, temp, request):
+    """Test if projection kernels are lower trianguler, indicating
+       that development only happens in one direction (i.e., there
+       is no regression in development)."""
+    # Get parametrized fixtures
+    life_stage = request.getfixturevalue(life_stage)
+    # Run test
+    kernel = life_stage.build_kernel([temp]).detach()
+    torch.testing.assert_close(kernel, torch.tril(kernel)) 
 
 ################
 # Transfer Tests

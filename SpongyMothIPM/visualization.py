@@ -103,8 +103,18 @@ if __name__ == '__main__':
     #     one_to_one=True)
     
     stage = kernels.Prediapause(config)
-    kernel = stage.build_kernel([15.0]).detach()
+    kernel = stage.build_kernel([0.0]).detach()
+    
     tensor2d_imshow(kernel, 
                     config.n_bins,
                     config.min_x,
                     config.max_x)
+    tensor2d_imshow(torch.tril(kernel), 
+                    config.n_bins,
+                    config.min_x,
+                    config.max_x)
+    tensor2d_imshow(kernel - torch.tril(kernel), 
+                    config.n_bins,
+                    config.min_x,
+                    config.max_x)
+
