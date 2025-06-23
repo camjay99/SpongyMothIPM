@@ -237,12 +237,14 @@ class Postdiapause(_LifeStage):
     def calc_mu(self, temp):
         mu = (
             self.config.delta_t
-            * (self.tau + self.delta*temp # R_T(0)
-                + (self.config.from_x
-                   * (self.omega 
-                      + self.kappa*temp 
-                      + self.psi*temp**2 
-                      + self.zeta*temp**3)))) # a_T * A
+            * (torch.maximum(
+                (self.tau + self.delta*temp # R_T(0)
+                 + (self.config.from_x
+                    * (self.omega 
+                       + self.kappa*temp 
+                       + self.psi*temp**2 
+                       + self.zeta*temp**3))),
+                torch.tensor(0)))) # a_T * A
         return mu
     
     def build_kernel(self, temps):
@@ -634,9 +636,11 @@ class Adult(_LifeStage):
     def calc_mu(self, temp):
         mu = (
             self.config.delta_t 
-            * (self.b 
-               + (self.m
-                  *(temp-10))))
+            * (torch.maximum(
+                (self.b 
+                 + (self.m
+                    *(temp-10))),
+                torch.tensor(0))))
         return mu
 
     def build_kernel(self, temps):

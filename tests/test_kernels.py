@@ -77,6 +77,11 @@ def pop_2D(config: Config):
                           torch.tensor(0.2), 
                           torch.tensor(1.1))
     return torch.flatten(pop_I * pop_D)
+
+@pytest.fixture(params=[0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 35.0, 40.0])
+def temp(request):
+    return request.param
+
 ################
 # Tests
 ################
@@ -94,15 +99,17 @@ def pop_2D(config: Config):
                            ('male_pupae', 'pop_1D'),
                            ('female_pupae', 'pop_1D'),
                            ('adult', 'pop_1D')])
-def test_eigenvalue(life_stage, pop, request):
+def test_eigenvalue(life_stage, pop, temp, request):
     # Get parametrized fixtures
     life_stage = request.getfixturevalue(life_stage)
     pop = request.getfixturevalue(pop)
     # Run test
-    kernel = life_stage.build_kernel([15.0]).detach()
+    kernel = life_stage.build_kernel([temp]).detach()
     next_pop = kernel @ pop
     print(next_pop)
     assert torch.sum(pop) == pytest.approx(torch.sum(next_pop))
+
+
 
 ################
 # Transfer Tests
