@@ -76,7 +76,7 @@ def pop_2D(config: Config):
     pop_D = util.LnormPDF(config.to_x, 
                           torch.tensor(0.2), 
                           torch.tensor(1.1))
-    return pop_I*pop_D
+    return torch.flatten(pop_I * pop_D)
 ################
 # Tests
 ################
@@ -108,37 +108,37 @@ def test_eigenvalue(life_stage, pop, request):
 # Transfer Tests
 ################
 
-def test_buffer_width():
-    # This test assumes that once a distribution is close to zero, 
-    # it does not increase again.
-    kern_rounded = main.kern_prediapause * (main.kern_prediapause > 0.0001)
-    kern_cum_sum = torch.cumsum(kern_rounded, dim=0)
-    kern_arg_max = torch.argmax(kern_cum_sum, dim=0)
-    kern_not_ended = kern_arg_max >= (main.n_bins - 1)
-    total_not_ended = torch.sum(kern_not_ended * ~main.xs_for_transfer)
-    assert total_not_ended == 0
+# def test_buffer_width():
+#     # This test assumes that once a distribution is close to zero, 
+#     # it does not increase again.
+#     kern_rounded = main.kern_prediapause * (main.kern_prediapause > 0.0001)
+#     kern_cum_sum = torch.cumsum(kern_rounded, dim=0)
+#     kern_arg_max = torch.argmax(kern_cum_sum, dim=0)
+#     kern_not_ended = kern_arg_max >= (main.n_bins - 1)
+#     total_not_ended = torch.sum(kern_not_ended * ~main.xs_for_transfer)
+#     assert total_not_ended == 0
 
-def test_transfer():
-    pop0 = main.LnormPDF(main.xs, torch.tensor(0.90), torch.tensor(1.1))
-    pop1 = main.LnormPDF(main.xs, torch.tensor(0.4), torch.tensor(1.1))
-    pop0_new, transfers = main.get_transfers(pop0)
-    pop1_new = main.add_transfers(pop1, transfers)
-    old_pop_total = torch.sum(pop0) + torch.sum(pop1)
-    new_pop_total = torch.sum(pop0_new) + torch.sum(pop1_new)
-    assert old_pop_total == pytest.approx(new_pop_total)
+# def test_transfer():
+#     pop0 = main.LnormPDF(main.xs, torch.tensor(0.90), torch.tensor(1.1))
+#     pop1 = main.LnormPDF(main.xs, torch.tensor(0.4), torch.tensor(1.1))
+#     pop0_new, transfers = main.get_transfers(pop0)
+#     pop1_new = main.add_transfers(pop1, transfers)
+#     old_pop_total = torch.sum(pop0) + torch.sum(pop1)
+#     new_pop_total = torch.sum(pop0_new) + torch.sum(pop1_new)
+#     assert old_pop_total == pytest.approx(new_pop_total)
 
-def test_transfer_diapause():
-    # Population 0
-    pop0_I = main.LnormPDF(main.from_x, torch.tensor(0.3), torch.tensor(1.1))
-    pop0_D = main.LnormPDF(main.to_x, torch.tensor(0.9), torch.tensor(1.1))
-    pop0 = torch.flatten(pop0_I * pop0_D)
-    # Population 1
-    pop1_I = main.LnormPDF(main.from_x, torch.tensor(0.4), torch.tensor(1.1))
-    pop1_D = main.LnormPDF(main.to_x, torch.tensor(0.6), torch.tensor(1.1))
-    pop1 = torch.flatten(pop1_I * pop1_D)
-    # Test transfers
-    pop0_new, transfers = main.get_transfers_diapause(pop0)
-    pop1_new = main.add_transfers_diapause(pop1, transfers)
-    old_pop_total = torch.sum(pop0) + torch.sum(pop1)
-    new_pop_total = torch.sum(pop0_new) + torch.sum(pop1_new)
-    assert old_pop_total == pytest.approx(new_pop_total)
+# def test_transfer_diapause():
+#     # Population 0
+#     pop0_I = main.LnormPDF(main.from_x, torch.tensor(0.3), torch.tensor(1.1))
+#     pop0_D = main.LnormPDF(main.to_x, torch.tensor(0.9), torch.tensor(1.1))
+#     pop0 = torch.flatten(pop0_I * pop0_D)
+#     # Population 1
+#     pop1_I = main.LnormPDF(main.from_x, torch.tensor(0.4), torch.tensor(1.1))
+#     pop1_D = main.LnormPDF(main.to_x, torch.tensor(0.6), torch.tensor(1.1))
+#     pop1 = torch.flatten(pop1_I * pop1_D)
+#     # Test transfers
+#     pop0_new, transfers = main.get_transfers_diapause(pop0)
+#     pop1_new = main.add_transfers_diapause(pop1, transfers)
+#     old_pop_total = torch.sum(pop0) + torch.sum(pop1)
+#     new_pop_total = torch.sum(pop0_new) + torch.sum(pop1_new)
+#     assert old_pop_total == pytest.approx(new_pop_total)

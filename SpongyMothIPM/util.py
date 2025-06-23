@@ -15,10 +15,14 @@ def LnormPDF(x, mu, sigma):
             * torch.log(sigma)
             * (math.sqrt(2.0*math.pi)))
             * torch.exp(
-                -((torch.log(x)-torch.log(mu))**2)
+                - ((torch.log(x)-torch.log(mu))**2)
                 / (2*torch.log(sigma)**2)))
-    return torch.where(torch.isnan(dist), torch.eye(dist.shape[0]), dist)
+    return dist
 
+def validate(tensor):
+    return torch.where(tensor.sum(dim=0, keepdim=True) == torch.tensor(0),
+                       torch.eye(tensor.shape[0]),
+                       tensor)
 
 def Logan_TM1(temp, psi, rho, t_max, crit_temp_width, tbase=0):
     tau = (t_max - temp + tbase) / crit_temp_width

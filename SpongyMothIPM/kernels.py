@@ -73,11 +73,9 @@ class Prediapause(_LifeStage):
         mu = torch.tensor(0, dtype=self.config.dtype)
         for temp in temps:
             mu += self.calc_mu(temp)
-        if torch.allclose(mu, torch.tensor(0, dtype=self.config.dtype)):
-            kernel = 0*self.config.x_dif
-        else:
-            kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
-            kernel = kernel / kernel.sum(dim=0, keepdim=True)
+        kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
+        kernel = util.validate(kernel)
+        kernel = kernel / kernel.sum(dim=0, keepdim=True)
         return kernel
     
 
@@ -164,21 +162,25 @@ class Diapause(_LifeStage):
         kernel_4D = (
             util.LnormPDF(self.config.I_dif, mu_I, self.sigma_I)
             * util.LnormPDF(self.config.D_dif, mu_D, self.sigma_D))
-        kernel_4D = kernel_4D / kernel_4D.sum(dim=(2,3), keepdim=True)
-        kernel_4D = torch.where(torch.isnan(kernel_4D), 0, kernel_4D)
-
-        # Need to reshape kernel so that it can be 
-        # used in matrix-vector multiplication.
-        n_bins = self.config.n_bins
-        kernel_2D = torch.reshape(kernel_4D, 
-                                  (n_bins, n_bins, n_bins*n_bins))
-        kernel_2D = torch.permute(kernel_2D, (2, 0, 1))
-        kernel_2D = torch.reshape(kernel_2D, 
-                                  (n_bins*n_bins, n_bins*n_bins))
         
+        # Nans can be generated as some of the "state space" currently
+        # contains unreachable states.
+        kernel_4D = torch.nan_to_num(kernel_4D)
+
         if twoD:
+            # Need to reshape kernel so that it can be 
+            # used in matrix-vector multiplication.
+            n_bins = self.config.n_bins
+            kernel_2D = torch.reshape(kernel_4D, 
+                                    (n_bins, n_bins, n_bins*n_bins))
+            kernel_2D = torch.permute(kernel_2D, (2, 0, 1))
+            kernel_2D = torch.reshape(kernel_2D, 
+                                    (n_bins*n_bins, n_bins*n_bins))
+            kernel_2D = util.validate(kernel_2D)
+            kernel_2D = kernel_2D / kernel_2D.sum(dim=0, keepdim=True)
             return kernel_2D
         else:
+            kernel_4D = kernel_4D / kernel_4D.sum(dim=(2,3), keepdim=True)
             return kernel_4D
     
     def init_pop(self, position_I, scale_I, position_D, scale_D):
@@ -247,11 +249,9 @@ class Postdiapause(_LifeStage):
         mu = torch.tensor(0, dtype=self.config.dtype)
         for temp in temps:
             mu = mu + self.calc_mu(temp)
-        if torch.allclose(mu, torch.tensor(0, dtype=self.config.dtype)):
-            kernel = 0*self.config.x_dif
-        else:
-            kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
-            kernel = kernel / kernel.sum(dim=0, keepdim=True)
+        kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
+        kernel = util.validate(kernel)
+        kernel = kernel / kernel.sum(dim=0, keepdim=True)
         return kernel
     
     def calc_starvation(self, temp):
@@ -302,11 +302,9 @@ class FirstInstar(_LifeStage):
         mu = torch.tensor(0, dtype=self.config.dtype)
         for temp in temps:
             mu += self.calc_mu(temp)
-        if torch.allclose(mu, torch.tensor(0, dtype=self.config.dtype)):
-            kernel = 0*self.config.x_dif
-        else:
-            kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
-            kernel = kernel / kernel.sum(dim=0, keepdim=True)
+        kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
+        kernel = util.validate(kernel)
+        kernel = kernel / kernel.sum(dim=0, keepdim=True)
         return kernel
     
 
@@ -347,11 +345,9 @@ class SecondInstar(_LifeStage):
         mu = torch.tensor(0, dtype=self.config.dtype)
         for temp in temps:
             mu += self.calc_mu(temp)
-        if torch.allclose(mu, torch.tensor(0, dtype=self.config.dtype)):
-            kernel = 0*self.config.x_dif
-        else:
-            kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
-            kernel = kernel / kernel.sum(dim=0, keepdim=True)
+        kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
+        kernel = util.validate(kernel)
+        kernel = kernel / kernel.sum(dim=0, keepdim=True)
         return kernel
     
     
@@ -394,11 +390,9 @@ class ThirdInstar(_LifeStage):
         mu = torch.tensor(0, dtype=self.config.dtype)
         for temp in temps:
             mu += self.calc_mu(temp)
-        if torch.allclose(mu, torch.tensor(0, dtype=self.config.dtype)):
-            kernel = 0*self.config.x_dif
-        else:
-            kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
-            kernel = kernel / kernel.sum(dim=0, keepdim=True)
+        kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
+        kernel = util.validate(kernel)
+        kernel = kernel / kernel.sum(dim=0, keepdim=True)
         return kernel
 
 
@@ -439,11 +433,9 @@ class FourthInstar(_LifeStage):
         mu = torch.tensor(0, dtype=self.config.dtype)
         for temp in temps:
             mu += self.calc_mu(temp)
-        if torch.allclose(mu, torch.tensor(0, dtype=self.config.dtype)):
-            kernel = 0*self.config.x_dif
-        else:
-            kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
-            kernel = kernel / kernel.sum(dim=0, keepdim=True)
+        kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
+        kernel = util.validate(kernel)
+        kernel = kernel / kernel.sum(dim=0, keepdim=True)
         return kernel
 
 
@@ -484,11 +476,9 @@ class FemaleFifthSixthInstar(_LifeStage):
         mu = torch.tensor(0, dtype=self.config.dtype)
         for temp in temps:
             mu += self.calc_mu(temp)
-        if torch.allclose(mu, torch.tensor(0, dtype=self.config.dtype)):
-            kernel = 0*self.config.x_dif
-        else:
-            kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
-            kernel = kernel / kernel.sum(dim=0, keepdim=True)
+        kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
+        kernel = util.validate(kernel)
+        kernel = kernel / kernel.sum(dim=0, keepdim=True)
         return kernel
 
     
@@ -529,11 +519,9 @@ class MaleFifthInstar(_LifeStage):
         mu = torch.tensor(0, dtype=self.config.dtype)
         for temp in temps:
             mu += self.calc_mu(temp)
-        if torch.allclose(mu, torch.tensor(0, dtype=self.config.dtype)):
-            kernel = 0*self.config.x_dif
-        else:
-            kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
-            kernel = kernel / kernel.sum(dim=0, keepdim=True)
+        kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
+        kernel = util.validate(kernel)
+        kernel = kernel / kernel.sum(dim=0, keepdim=True)
         return kernel
 
 
@@ -574,11 +562,9 @@ class FemalePupae(_LifeStage):
         mu = torch.tensor(0, dtype=self.config.dtype)
         for temp in temps:
             mu += self.calc_mu(temp)
-        if torch.allclose(mu, torch.tensor(0, dtype=self.config.dtype)):
-            kernel = 0*self.config.x_dif
-        else:
-            kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
-            kernel = kernel / kernel.sum(dim=0, keepdim=True)
+        kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
+        kernel = util.validate(kernel)
+        kernel = kernel / kernel.sum(dim=0, keepdim=True)
         return kernel
     
     
@@ -619,11 +605,9 @@ class MalePupae(_LifeStage):
         mu = torch.tensor(0, dtype=self.config.dtype)
         for temp in temps:
             mu += self.calc_mu(temp)
-        if torch.allclose(mu, torch.tensor(0, dtype=self.config.dtype)):
-            kernel = 0*self.config.x_dif
-        else:
-            kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
-            kernel = kernel / kernel.sum(dim=0, keepdim=True)
+        kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
+        kernel = util.validate(kernel)
+        kernel = kernel / kernel.sum(dim=0, keepdim=True)
         return kernel
     
     
@@ -659,11 +643,9 @@ class Adult(_LifeStage):
         mu = torch.tensor(0.0, dtype=self.config.dtype)
         for temp in temps:
             mu += self.calc_mu(temp)
-        if torch.allclose(mu, torch.tensor(0, dtype=self.config.dtype)):
-            kernel = 0*self.config.x_dif
-        else:
-            kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
-            kernel = kernel / kernel.sum(dim=0, keepdim=True)
+        kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
+        kernel = util.validate(kernel)
+        kernel = kernel / kernel.sum(dim=0, keepdim=True)
         return kernel
 
     def get_transfers(adult_females):
