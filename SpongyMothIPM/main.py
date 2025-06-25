@@ -25,7 +25,7 @@ if __name__ == '__main__':
 
 
     config = Config(dtype=torch.float,
-                    n_bins=200,
+                    n_bins=100,
                     min_x=0,
                     max_x=1.5,
                     delta_t=sample_period/24)
@@ -36,20 +36,26 @@ if __name__ == '__main__':
     # Model Driver
     ##############
 
+    def quick_test(diapause, temps):
+        kernel = diapause.build_kernel(temps).detach()
+        col_sums = kernel.sum(dim=0)
+        print((col_sums - torch.ones(col_sums.shape)).sum())
+        torch.testing.assert_close(col_sums, torch.ones(col_sums.shape)) 
+
     with torch.no_grad():
         # Build life stages
-        prediapause = kernels.Prediapause(config, save=True)
-        diapause = kernels.Diapause(config, save=True)
-        postdiapause = kernels.Postdiapause(config, save=True)
-        first_instar = kernels.FirstInstar(config, save=True)
-        second_instar = kernels.SecondInstar(config, save=True)
-        third_instar = kernels.ThirdInstar(config, save=True)
-        fourth_instar = kernels.FourthInstar(config, save=True)
-        male_late_instar = kernels.MaleFifthInstar(config, save=True)
-        female_late_instar = kernels.FemaleFifthSixthInstar(config, save=True)
-        male_pupae = kernels.MalePupae(config, save=True)
-        female_pupae = kernels.FemalePupae(config, save=True)
-        adults = kernels.Adult(config, save=True)
+        prediapause = kernels.Prediapause(config, save=True, mortality=0)
+        diapause = kernels.Diapause(config, save=True, mortality=0)
+        postdiapause = kernels.Postdiapause(config, save=True, mortality=0)
+        first_instar = kernels.FirstInstar(config, save=True, mortality=0)
+        second_instar = kernels.SecondInstar(config, save=True, mortality=0)
+        third_instar = kernels.ThirdInstar(config, save=True, mortality=0)
+        fourth_instar = kernels.FourthInstar(config, save=True, mortality=0)
+        male_late_instar = kernels.MaleFifthInstar(config, save=True, mortality=0)
+        female_late_instar = kernels.FemaleFifthSixthInstar(config, save=True, mortality=0)
+        male_pupae = kernels.MalePupae(config, save=True, mortality=0)
+        female_pupae = kernels.FemalePupae(config, save=True, mortality=0)
+        adults = kernels.Adult(config, save=True, mortality=0)
 
         # Initiate populations
         mu = 0.2
@@ -69,13 +75,13 @@ if __name__ == '__main__':
 
         # Run Model
         for day in range(days):
-            start = day*(24%sample_period)
-            end = (day+1)*(24%sample_period)
-
+            start = day*(24//sample_period)
+            end = (day+1)*(24//sample_period)
             day_temps = temps[start:end]
-
             transfers = prediapause.run_one_step(day_temps)
             transfers = diapause.run_one_step(day_temps, transfers)
+            print(day_temps)
+            quick_test(diapause, day_temps)
             transfers = postdiapause.run_one_step(day_temps, transfers)
             transfers = first_instar.run_one_step(day_temps, transfers)
             transfers = second_instar.run_one_step(day_temps, transfers)
@@ -90,7 +96,6 @@ if __name__ == '__main__':
 
     fig, ax = plt.subplots()
 
-    print(prediapause.abundances)
     ax.plot(prediapause.abundances, label='Prediapause')
     ax.plot(diapause.abundances, label='Diapause')
     ax.plot(postdiapause.abundances, label='Postdiapause')
@@ -103,5 +108,5 @@ if __name__ == '__main__':
     ax.plot(male_pupae.abundances, label='Pupae male')
     ax.plot(female_pupae.abundances, label='Pupae female')
     ax.plot(adults.abundances, label='Adult')
-
+    ax.legend()
     plt.show()

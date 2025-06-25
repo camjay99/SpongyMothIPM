@@ -39,14 +39,14 @@ def tensor4d_to_2d_imshow(tensor, n_bins, sample_dims, sample_rates, dim_names, 
         for j in range(n_cols):
             # Isolate slice
             slice = torch.index_select(tensor, 
-                                       dim=sample_dims[0], 
-                                       index=torch.tensor(j*sample_rates[0]))
+                                       dim=sample_dims[1], 
+                                       index=torch.tensor(j*sample_rates[1]))
             slice = torch.index_select(slice,
-                                       dim=sample_dims[1],
-                                       index=torch.tensor(i*sample_rates[1]))
+                                       dim=sample_dims[0],
+                                       index=torch.tensor(i*sample_rates[0]))
             slice = slice.reshape((n_bins, n_bins))
             axes[i, j].imshow(slice, cmap='Reds')
-            axes[i, j].scatter(i*sample_rates[1], j*sample_rates[0], color='black', s=5)
+            axes[i, j].scatter(j*sample_rates[1], i*sample_rates[0], color='black', s=5)
             # axes[i, j].set_xticks([])
             # axes[i, j].set_yticks([])
             axes[i, j].set_ylim([n_bins-0.5, -0.5])
@@ -92,29 +92,22 @@ if __name__ == '__main__':
     #              SpongyMothIPM.xs, 
     #              10)
 
+    stage = kernels.Diapause(config)
+    kernel = stage.build_kernel([0.0], twoD=False).detach()
+    tensor4d_to_2d_imshow(
+        kernel,
+        100,
+        (0, 1),
+        (5, 25),
+        ("I", "D"),
+        one_to_one=True)
+    
     # stage = kernels.Diapause(config)
-    # kernel = stage.build_kernel([10.0], twoD=False).detach()
-    # tensor4d_to_2d_imshow(
-    #     kernel,
-    #     100,
-    #     (2, 3),
-    #     (20, 20),
-    #     ("I", "D"),
-    #     one_to_one=True)
+    # kernel1 = stage.build_kernel([30.0]).detach()
     
-    stage = kernels.Prediapause(config)
-    kernel = stage.build_kernel([0.0]).detach()
-    
-    tensor2d_imshow(kernel, 
-                    config.n_bins,
-                    config.min_x,
-                    config.max_x)
-    tensor2d_imshow(torch.tril(kernel), 
-                    config.n_bins,
-                    config.min_x,
-                    config.max_x)
-    tensor2d_imshow(kernel - torch.tril(kernel), 
-                    config.n_bins,
-                    config.min_x,
-                    config.max_x)
+    # tensor2d_imshow(kernel1, 
+    #                 config.n_bins*config.n_bins,
+    #                 config.min_x,
+    #                 config.max_x)
+
 

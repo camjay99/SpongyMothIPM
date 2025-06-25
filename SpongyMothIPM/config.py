@@ -5,7 +5,7 @@ class Config():
                  dtype=torch.float,
                  n_bins=100,
                  min_x=0,
-                 max_x=1.5,
+                 max_x=1,
                  delta_t=1):
         #############
         # Torch Setup
@@ -29,7 +29,7 @@ class Config():
         ##################
         self.shape = (self.n_bins, self.n_bins)
         self.xs = torch.linspace(self.min_x, self.max_x, self.n_bins)
-        self.xs_for_transfer = self.xs > 1
+        self.xs_for_transfer = self.xs >= 1
         self.input_xs = torch.zeros_like(self.xs)
         self.input_xs[0] = 1
         self.from_x = torch.reshape(self.xs, (1, self.n_bins))
@@ -45,6 +45,6 @@ class Config():
         self.I_dif = torch.maximum(torch.tensor(0), self.to_I - self.from_I)
         self.D_dif = torch.maximum(torch.tensor(0), self.to_D - self.from_D)
         self.grid2d = torch.squeeze(torch.ones_like(self.from_I)*self.from_D)
-        self.grid2d_for_transfer = self.grid2d > 1
+        self.grid2d_for_transfer = self.grid2d >= 1
         self.input_grid2d = torch.zeros_like(self.grid2d)
         self.input_grid2d[-1, 0] = 1

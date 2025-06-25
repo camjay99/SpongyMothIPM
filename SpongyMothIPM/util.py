@@ -3,7 +3,7 @@ import math
 import torch
 
 def LnormPDF(x, mu, sigma):
-    """Compute the log-normal pdf based on x and a list of mulog/sigmalog."""
+    """Compute the log-normal pdf based on x and a tensor of mu/sigma."""
     # When x = 0, lognormal pdf will return nan when it should be 0.
     # Therefore, we slightly nudge values first (this helps ensure
     # differentiability, which zeroing the first entry would not do).
@@ -19,9 +19,23 @@ def LnormPDF(x, mu, sigma):
                 / (2*torch.log(sigma)**2)))
     return dist
 
-def validate(tensor):
+def LnormCDF(x, mu, sigma):
+    """Compute the log-normal cdf based on x and a tensor of mu/sigma"""
+    dist = torch.where(
+        x > 0,
+        (0.5
+         * (1
+            + torch.erf(
+                (torch.log(x)
+                 - torch.log(mu)) 
+                / (torch.log(sigma)
+                   * math.sqrt(2.0))))),
+        0)
+    return dist
+
+def validate(tensor, mu):
     return torch.where(
-        torch.isclose(tensor.sum(dim=0, keepdim=True), 
+        torch.isclose(mu, 
                       torch.tensor(0.0)),
         torch.eye(tensor.shape[0]),
         tensor)

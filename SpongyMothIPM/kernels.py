@@ -36,9 +36,22 @@ class _LifeStage():
         self.abundances.append(torch.sum(self.pop))
         self.hist_pops.append(self.pop.detach().clone())
 
+    def build_kernel(self, temps):
+        mu = torch.tensor(0, dtype=self.config.dtype)
+        for temp in temps:
+            mu = mu + self.calc_mu(temp)
+        kernel = util.LnormCDF(self.config.x_dif - 1/(2*(self.config.n_bins-1)), 
+                               mu, self.sigma)
+        kernel = torch.diff(kernel, 
+                            dim=0, 
+                            append=torch.ones((1,
+                                               self.config.n_bins)))
+        kernel = util.validate(kernel, mu)
+        return kernel
+
 
 class Prediapause(_LifeStage):
-    def __init__(self, config, save=False):
+    def __init__(self, config, save=False, sigma=1.1, mortality=0.1):
         self.config = config
         self.save = save
         if save:
@@ -52,10 +65,10 @@ class Prediapause(_LifeStage):
         self.psi = torch.tensor(0.0191)
 
         ## Optimized Parameters
-        self.sigma = torch.tensor(3, 
+        self.sigma = torch.tensor(sigma, 
                                   dtype=self.config.dtype, 
                                   requires_grad=True)
-        self.mortality = torch.tensor(0.1, 
+        self.mortality = torch.tensor(mortality, 
                                       dtype=self.config.dtype,
                                       requires_grad=True)
 
@@ -69,19 +82,11 @@ class Prediapause(_LifeStage):
                              self.crit_temp_width))
         return mu
 
-    def build_kernel(self, temps):
-        mu = torch.tensor(0, dtype=self.config.dtype)
-        for temp in temps:
-            mu += self.calc_mu(temp)
-        kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
-        print(kernel.sum(dim=0, keepdim=True))
-        kernel = util.validate(kernel)
-        kernel = kernel / kernel.sum(dim=0, keepdim=True)
-        return kernel
+
     
 
 class Diapause(_LifeStage):
-    def __init__(self, config, save=False):
+    def __init__(self, config, save=False, sigma_I=1.1, sigma_D=1.1, mortality=0.1):
         self.config = config
         self.save = save
         if save:
@@ -99,6 +104,8 @@ class Diapause(_LifeStage):
         self.I_0 = torch.tensor(1.1880)
         self.A_1 = torch.tensor(1.56441438)
         self.A_2 = torch.tensor(0.46354992)
+        self.A_min = torch.tensor(0.3)
+        self.A_max = torch.tensor(1)
         self.t_min = torch.tensor(-5)
         self.t_max = torch.tensor(25)
         self.alpha = torch.tensor(2.00000)
@@ -106,13 +113,13 @@ class Diapause(_LifeStage):
         self.gamma = torch.tensor(0.56000)
 
         ## Optimized Parameters
-        self.sigma_I = torch.tensor(3, 
+        self.sigma_I = torch.tensor(sigma_I, 
                                     dtype=self.config.dtype, 
                                     requires_grad=True)
-        self.sigma_D = torch.tensor(3, 
+        self.sigma_D = torch.tensor(sigma_D, 
                                     dtype=self.config.dtype, 
                                     requires_grad=True)
-        self.mortality = torch.tensor(0.1, 
+        self.mortality = torch.tensor(mortality, 
                                       dtype=config.dtype, 
                                       requires_grad=True)
 
@@ -123,21 +130,27 @@ class Diapause(_LifeStage):
         # Here we calculate dI/dt from I* = 1 - I
         mu_I = (
             self.config.delta_t
-            * (torch.maximum(-1 + self.config.from_I,
-                            (torch.log(rp)
-                            * ((1 - self.config.from_I) 
-                                - self.I_0 
-                                - rs)))))
+            * (torch.maximum(
+                -1 + self.config.from_I,
+                (torch.log(rp)
+                * ((1 - self.config.from_I) 
+                    - self.I_0 
+                    - rs)))))
         mu_I = -1*mu_I # dI*/dt = -dI/dt
+        mu_I = torch.where(mu_I < 0, 0, mu_I)
         # Change is expressed over entire input space, since
         # inhibitor depletion does not depend on development rate
         mu_I = torch.tile(mu_I, (1, self.config.n_bins, 1, 1)) 
-
         return mu_I
     
     def calc_mu_D(self, temp):
         Z = (self.t_max - temp) / (self.t_max - self.t_min)
-        A = 0.3 + 0.7*(1-Z)**(self.A_1 * (Z**self.A_2))
+        if temp <= self.t_min:
+            A = self.A_min
+        elif temp >= self.t_max:
+            A = self.A_max
+        else:
+            A = 0.3 + 0.7*(1-Z)**(self.A_1 * (Z**self.A_2))
         pdr = torch.exp(self.c 
                         + self.pdr_t*temp 
                         + self.pdr_t_2*(temp**2) 
@@ -159,15 +172,28 @@ class Diapause(_LifeStage):
         for temp in temps:
             mu_I = mu_I + self.calc_mu_I(temp)
             mu_D = mu_D + self.calc_mu_D(temp)
+        
+        kernel_I_4D = util.LnormCDF(self.config.I_dif, mu_I, self.sigma_I)
+        kernel_I_4D = torch.diff(kernel_I_4D, 
+                            dim=2, 
+                            append=torch.ones((self.config.n_bins,
+                                               self.config.n_bins,
+                                               1,
+                                               1)))
 
-        kernel_4D = (
-            util.LnormPDF(self.config.I_dif, mu_I, self.sigma_I)
-            * util.LnormPDF(self.config.D_dif, mu_D, self.sigma_D))
+        kernel_D_4D = util.LnormCDF(self.config.D_dif, mu_D, self.sigma_D)
+        kernel_D_4D = torch.diff(kernel_D_4D, 
+                            dim=3, 
+                            append=torch.ones((self.config.n_bins,
+                                               self.config.n_bins,
+                                               1,
+                                               1)))
+
+        kernel_4D = kernel_I_4D * kernel_D_4D
         
         # Nans can be generated as some of the "state space" currently
         # contains unreachable states.
-        kernel_4D = torch.nan_to_num(kernel_4D)
-
+        #kernel_4D = torch.nan_to_num(kernel_4D)
         if twoD:
             # Need to reshape kernel so that it can be 
             # used in matrix-vector multiplication.
@@ -177,14 +203,18 @@ class Diapause(_LifeStage):
             kernel_2D = torch.permute(kernel_2D, (2, 0, 1))
             kernel_2D = torch.reshape(kernel_2D, 
                                     (n_bins*n_bins, n_bins*n_bins))
-            kernel_2D = util.validate(kernel_2D)
-            kernel_2D = kernel_2D / kernel_2D.sum(dim=0, keepdim=True)
+            
+            # Also reshape to create means
+            mu = torch.reshape(mu_I*mu_D, (1, n_bins*n_bins))
+            kernel_2D = util.validate(kernel_2D, mu)
             return kernel_2D
         else:
-            kernel_4D = kernel_4D / kernel_4D.sum(dim=(2,3), keepdim=True)
             return kernel_4D
     
-    def init_pop(self, position_I, scale_I, position_D, scale_D):
+    def init_pop(self, position_I, scale_I, position_D=None, scale_D=None):
+        if (position_D == None) and (scale_D == None):
+            position_D = position_I
+            scale_D = scale_I
         pop_I = util.LnormPDF(self.config.from_x, 
                               torch.tensor(position_I), 
                               torch.tensor(scale_I))
@@ -202,12 +232,12 @@ class Diapause(_LifeStage):
 
     def add_transfers(self, transfers=0):
         pop_2D = torch.reshape(self.pop, self.config.shape)
-        pop_2D += transfers*self.config.input_xs
+        pop_2D += transfers*self.config.input_grid2d
         self.pop = torch.flatten(pop_2D)
 
 
 class Postdiapause(_LifeStage):
-    def __init__(self, config, save=False):
+    def __init__(self, config, save=False, sigma=1.1, mortality=0.1):
         self.config = config
         self.save = save
         if save:
@@ -228,10 +258,10 @@ class Postdiapause(_LifeStage):
         self.slope = torch.tensor(1.53550927)
 
         ## Optimized Parameters
-        self.sigma = torch.tensor(1.1, 
+        self.sigma = torch.tensor(sigma, 
                                   dtype=self.config.dtype, 
                                   requires_grad=True)
-        self.mortality = torch.tensor(0.1, 
+        self.mortality = torch.tensor(mortality, 
                                       dtype=self.config.dtype, 
                                       requires_grad=True)
     
@@ -248,15 +278,6 @@ class Postdiapause(_LifeStage):
                 torch.tensor(0)))) # a_T * A
         return mu
     
-    def build_kernel(self, temps):
-        mu = torch.tensor(0, dtype=self.config.dtype)
-        for temp in temps:
-            mu = mu + self.calc_mu(temp)
-        kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
-        kernel = util.validate(kernel)
-        kernel = kernel / kernel.sum(dim=0, keepdim=True)
-        return kernel
-    
     def calc_starvation(self, temp):
         return (((temp < self.changepoint)
                 * self.preincrease)
@@ -267,7 +288,7 @@ class Postdiapause(_LifeStage):
         
 
 class FirstInstar(_LifeStage):
-    def __init__(self, config, save=False):
+    def __init__(self, config, save=False, sigma=1.1, mortality=0.1):
         self.config = config
         self.save = save
         if save:
@@ -282,10 +303,10 @@ class FirstInstar(_LifeStage):
         self.crit_temp_width = torch.tensor(12.65)
 
         ## Optimized Parameters
-        self.sigma = torch.tensor(3, 
+        self.sigma = torch.tensor(sigma, 
                                   dtype=self.config.dtype, 
                                   requires_grad=True)
-        self.mortality = torch.tensor(0.7, 
+        self.mortality = torch.tensor(mortality, 
                                       dtype=self.config.dtype, 
                                       requires_grad=True)
         
@@ -301,18 +322,8 @@ class FirstInstar(_LifeStage):
                              10))
         return mu
 
-    def build_kernel(self, temps):
-        mu = torch.tensor(0, dtype=self.config.dtype)
-        for temp in temps:
-            mu += self.calc_mu(temp)
-        kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
-        kernel = util.validate(kernel)
-        kernel = kernel / kernel.sum(dim=0, keepdim=True)
-        return kernel
-    
-
 class SecondInstar(_LifeStage):
-    def __init__(self, config, save=False):
+    def __init__(self, config, save=False, sigma=1.1, mortality=0.1):
         self.config = config
         self.save = save
         if save:
@@ -326,10 +337,10 @@ class SecondInstar(_LifeStage):
         self.crit_temp_width = torch.tensor(4.688)
 
         ## Optimized Parameters
-        self.sigma = torch.tensor(3, 
+        self.sigma = torch.tensor(sigma, 
                                   dtype=self.config.dtype, 
                                   requires_grad=True)
-        self.mortality = torch.tensor(0.7, 
+        self.mortality = torch.tensor(mortality, 
                                       dtype=self.config.dtype, 
                                       requires_grad=True)
     
@@ -344,18 +355,9 @@ class SecondInstar(_LifeStage):
                              13.3))
         return mu
     
-    def build_kernel(self, temps):
-        mu = torch.tensor(0, dtype=self.config.dtype)
-        for temp in temps:
-            mu += self.calc_mu(temp)
-        kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
-        kernel = util.validate(kernel)
-        kernel = kernel / kernel.sum(dim=0, keepdim=True)
-        return kernel
-    
     
 class ThirdInstar(_LifeStage):
-    def __init__(self, config, save=False):
+    def __init__(self, config, save=False, sigma=1.1, mortality=0.1):
         self.config = config
         self.save = save
         if save:
@@ -370,10 +372,10 @@ class ThirdInstar(_LifeStage):
         self.crit_temp_width = torch.tensor(8.494)
 
         ## Optimized Parameters
-        self.sigma = torch.tensor(3, 
+        self.sigma = torch.tensor(sigma, 
                                   dtype=self.config.dtype, 
                                   requires_grad=True)
-        self.mortality = torch.tensor(0.7, 
+        self.mortality = torch.tensor(mortality, 
                                       dtype=self.config.dtype, 
                                       requires_grad=True)
     
@@ -389,18 +391,9 @@ class ThirdInstar(_LifeStage):
                              13.3))
         return mu
 
-    def build_kernel(self, temps):
-        mu = torch.tensor(0, dtype=self.config.dtype)
-        for temp in temps:
-            mu += self.calc_mu(temp)
-        kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
-        kernel = util.validate(kernel)
-        kernel = kernel / kernel.sum(dim=0, keepdim=True)
-        return kernel
-
 
 class FourthInstar(_LifeStage):
-    def __init__(self, config, save=False):
+    def __init__(self, config, save=False, sigma=1.1, mortality=0.1):
         self.config = config
         self.save = save
         if save:
@@ -414,10 +407,10 @@ class FourthInstar(_LifeStage):
         self.crit_temp_width = torch.tensor(5.358)
 
         ## Optimized Parameters
-        self.sigma = torch.tensor(3, 
+        self.sigma = torch.tensor(sigma, 
                                   dtype=self.config.dtype, 
                                   requires_grad=True)
-        self.mortality = torch.tensor(0.7, 
+        self.mortality = torch.tensor(mortality, 
                                       dtype=self.config.dtype, 
                                       requires_grad=True)
     
@@ -432,18 +425,9 @@ class FourthInstar(_LifeStage):
                              13.3))
         return mu
 
-    def build_kernel(self, temps):
-        mu = torch.tensor(0, dtype=self.config.dtype)
-        for temp in temps:
-            mu += self.calc_mu(temp)
-        kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
-        kernel = util.validate(kernel)
-        kernel = kernel / kernel.sum(dim=0, keepdim=True)
-        return kernel
-
 
 class FemaleFifthSixthInstar(_LifeStage):
-    def __init__(self, config, save=False):
+    def __init__(self, config, save=False, sigma=1.1, mortality=0.1):
         self.config = config
         self.save = save
         if save:
@@ -457,10 +441,10 @@ class FemaleFifthSixthInstar(_LifeStage):
         self.crit_temp_width = torch.tensor(6.76039768)
 
         ## Optimized Parameters
-        self.sigma = torch.tensor(3, 
+        self.sigma = torch.tensor(sigma, 
                                   dtype=self.config.dtype, 
                                   requires_grad=True)
-        self.mortality = torch.tensor(0.7, 
+        self.mortality = torch.tensor(mortality, 
                                       dtype=self.config.dtype, 
                                       requires_grad=True)
     
@@ -475,18 +459,9 @@ class FemaleFifthSixthInstar(_LifeStage):
                              0))
         return mu
 
-    def build_kernel(self, temps): 
-        mu = torch.tensor(0, dtype=self.config.dtype)
-        for temp in temps:
-            mu += self.calc_mu(temp)
-        kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
-        kernel = util.validate(kernel)
-        kernel = kernel / kernel.sum(dim=0, keepdim=True)
-        return kernel
-
     
 class MaleFifthInstar(_LifeStage):
-    def __init__(self, config, save=False):
+    def __init__(self, config, save=False, sigma=1.1, mortality=0.1):
         self.config = config
         self.save = save
         if save:
@@ -500,10 +475,10 @@ class MaleFifthInstar(_LifeStage):
         self.crit_temp_width = torch.tensor(6.71654206)
 
         ## Optimized Parameters
-        self.sigma = torch.tensor(3, 
+        self.sigma = torch.tensor(sigma, 
                                   dtype=self.config.dtype, 
                                   requires_grad=True)
-        self.mortality = torch.tensor(0.7, 
+        self.mortality = torch.tensor(mortality, 
                                       dtype=self.config.dtype, 
                                       requires_grad=True)
         
@@ -518,18 +493,9 @@ class MaleFifthInstar(_LifeStage):
                              0))
         return mu
 
-    def build_kernel(self, temps):
-        mu = torch.tensor(0, dtype=self.config.dtype)
-        for temp in temps:
-            mu += self.calc_mu(temp)
-        kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
-        kernel = util.validate(kernel)
-        kernel = kernel / kernel.sum(dim=0, keepdim=True)
-        return kernel
-
 
 class FemalePupae(_LifeStage):
-    def __init__(self, config, save=False):
+    def __init__(self, config, save=False, sigma=1.1, mortality=0.1):
         self.config = config
         self.save = save
         if save:
@@ -543,10 +509,10 @@ class FemalePupae(_LifeStage):
         self.crit_temp_width = torch.tensor(6.24241402e-01)
 
         ## Optimized Parameters
-        self.sigma = torch.tensor(3, 
+        self.sigma = torch.tensor(sigma, 
                                   dtype=self.config.dtype, 
                                   requires_grad=True)
-        self.mortality = torch.tensor(0.4, 
+        self.mortality = torch.tensor(mortality, 
                                       dtype=self.config.dtype, 
                                       requires_grad=True)
 
@@ -560,19 +526,10 @@ class FemalePupae(_LifeStage):
                              self.crit_temp_width, 
                              0))
         return mu
-
-    def build_kernel(self, temps):
-        mu = torch.tensor(0, dtype=self.config.dtype)
-        for temp in temps:
-            mu += self.calc_mu(temp)
-        kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
-        kernel = util.validate(kernel)
-        kernel = kernel / kernel.sum(dim=0, keepdim=True)
-        return kernel
     
     
 class MalePupae(_LifeStage):
-    def __init__(self, config, save=False):
+    def __init__(self, config, save=False, sigma=1.1, mortality=0.1):
         self.config = config
         self.save = save
         if save:
@@ -586,10 +543,10 @@ class MalePupae(_LifeStage):
         self.crit_temp_width = torch.tensor(9.75671208e-01)
 
         ## Optimized Parameters
-        self.sigma = torch.tensor(3, 
+        self.sigma = torch.tensor(sigma, 
                                   dtype=self.config.dtype, 
                                   requires_grad=True)
-        self.mortality = torch.tensor(0.1, 
+        self.mortality = torch.tensor(mortality, 
                                       dtype=self.config.dtype, 
                                       requires_grad=True)
 
@@ -603,19 +560,10 @@ class MalePupae(_LifeStage):
                              self.crit_temp_width, 
                              0))
         return mu
-
-    def build_kernel(self, temps):
-        mu = torch.tensor(0, dtype=self.config.dtype)
-        for temp in temps:
-            mu += self.calc_mu(temp)
-        kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
-        kernel = util.validate(kernel)
-        kernel = kernel / kernel.sum(dim=0, keepdim=True)
-        return kernel
     
     
 class Adult(_LifeStage):
-    def __init__(self, config, save=False):
+    def __init__(self, config, save=False, sigma=1.1, mortality=0.1):
         self.config = config
         self.save = save
         if save:
@@ -627,10 +575,10 @@ class Adult(_LifeStage):
         self.m = torch.tensor(0.04)
 
         ## Optimized Parameters
-        self.sigma = torch.tensor(3, 
+        self.sigma = torch.tensor(sigma, 
                                   dtype=self.config.dtype, 
                                   requires_grad=True)
-        self.mortality = torch.tensor(0.1, 
+        self.mortality = torch.tensor(mortality, 
                                      dtype=self.config.dtype, 
                                      requires_grad=True)
     
@@ -643,15 +591,6 @@ class Adult(_LifeStage):
                     *(temp-10))),
                 torch.tensor(0))))
         return mu
-
-    def build_kernel(self, temps):
-        mu = torch.tensor(0.0, dtype=self.config.dtype)
-        for temp in temps:
-            mu += self.calc_mu(temp)
-        kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
-        kernel = util.validate(kernel)
-        kernel = kernel / kernel.sum(dim=0, keepdim=True)
-        return kernel
 
     def get_transfers(adult_females):
         # Basic reproduction function, as we are currently only focusing
