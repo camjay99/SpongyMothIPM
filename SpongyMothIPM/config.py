@@ -38,8 +38,9 @@ class Config():
 
         # These are used for computing diapause kernel
         self.ys = torch.linspace(0.0001, 1, self.n_bins)
-        self.from_I = torch.reshape(self.xs, (self.n_bins, 1, 1, 1))
-        self.to_I = torch.reshape(self.xs, (1, 1, self.n_bins, 1))
+        self.Is = torch.linspace(0, 1.1880, self.n_bins)
+        self.from_I = torch.reshape(self.Is, (self.n_bins, 1, 1, 1))
+        self.to_I = torch.reshape(self.Is, (1, 1, self.n_bins, 1))
         self.from_D = torch.reshape(self.ys, (1, self.n_bins, 1, 1))
         self.to_D = torch.reshape(self.ys, (1, 1, 1, self.n_bins))
         self.I_dif = torch.maximum(torch.tensor(0), self.to_I - self.from_I)
@@ -47,4 +48,4 @@ class Config():
         self.grid2d = torch.squeeze(torch.ones_like(self.from_I)*self.from_D)
         self.grid2d_for_transfer = self.grid2d >= 1
         self.input_grid2d = torch.zeros_like(self.grid2d)
-        self.input_grid2d[-1, 0] = 1
+        self.input_grid2d[0, 0] = 1

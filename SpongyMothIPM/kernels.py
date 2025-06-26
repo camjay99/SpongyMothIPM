@@ -9,8 +9,8 @@ class _LifeStage():
                                  torch.tensor(scale))
         self.pop = self.pop*total/self.pop.sum()
         
-    def grow_pop(self, temp):
-        kernel = self.build_kernel(temp)
+    def grow_pop(self, temps):
+        kernel = self.build_kernel(temps)
         self.pop = kernel @ self.pop
 
     def apply_mortality(self):
@@ -134,13 +134,13 @@ class Diapause(_LifeStage):
         mu_I = (
             self.config.delta_t
             * (torch.maximum(
-                0,
+                torch.tensor(0.0),
                 -1 * (torch.maximum(
                     -1 + self.config.from_I,
                     (torch.log(rp)
                     * ((1 - self.config.from_I) 
                         - self.I_0 
-                        - rs))))))
+                        - rs)))))))
         # Change is expressed over entire input space, since
         # inhibitor depletion does not depend on development rate
         mu_I = torch.tile(mu_I, (1, self.config.n_bins, 1, 1)) 
@@ -220,10 +220,10 @@ class Diapause(_LifeStage):
         if (position_D == None) and (scale_D == None):
             position_D = position_I
             scale_D = scale_I
-        pop_I = util.LnormPDF(self.config.from_x, 
+        pop_I = util.LnormPDF(self.config.to_x, 
                               torch.tensor(position_I), 
                               torch.tensor(scale_I))
-        pop_D = util.LnormPDF(self.config.to_x, 
+        pop_D = util.LnormPDF(self.config.from_x, 
                               torch.tensor(position_D), 
                               torch.tensor(scale_D))
         self.pop = torch.flatten(pop_I * pop_D)

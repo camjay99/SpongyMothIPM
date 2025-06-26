@@ -15,7 +15,7 @@ def load_daymet_data(file_path):
     df = pd.read_csv(file_path, header=6)
     return df
 
-def daymet_to_diurnal(df, low_time, high_time, sample_period, sample_start_time):
+def daymet_to_diurnal(df, low_time, high_time, sample_period, sample_start_time, num_days=None):
     """Take daymet point record and computes diurnal cycle at the specified
        sampling frequency. Assumptions of when the low and high temperatures
        occurred are required. Algorithm will repeat first/last day as 
@@ -25,6 +25,10 @@ def daymet_to_diurnal(df, low_time, high_time, sample_period, sample_start_time)
     daily_obs = 24 // sample_period
     min_temps = df['tmin (deg c)'].to_numpy()
     max_temps = df['tmax (deg c)'].to_numpy()
+
+    if num_days is not None:
+        min_temps = min_temps[:num_days]
+        max_temps = max_temps[:num_days]
    
     # Based on which time occurs first, alter
     # computations to ensure we have estimates
@@ -112,14 +116,6 @@ def daymet_to_diurnal(df, low_time, high_time, sample_period, sample_start_time)
                     + betas_p2[1:-1]
             )
     return temps
-
-def calc_GDD(temps, sample_period, day):
-    start = day*(24%sample_period)
-    GDD = 0
-    for i in range(24%sample_period):
-        GDD += temps[start+i]*sample_period/24
-    return GDD
-
 
 if __name__ == '__main__':
     df = load_daymet_data('./data/11752_lat_41.7074_lon_-77.0846_2025-06-11_123955.csv')

@@ -13,7 +13,7 @@ if __name__ == '__main__':
     ###################
     # Load Weather Data
     ###################
-    df = met.load_daymet_data('./data/11752_lat_41.7074_lon_-77.0846_2025-06-11_123955.csv')
+    df = met.load_daymet_data('./data/11932_lat_42.4687_lon_-76.3787_2025-06-26_132939.csv')
     low_time = 1
     high_time = 13
     sample_period = 4
@@ -22,7 +22,8 @@ if __name__ == '__main__':
                                 low_time, 
                                 high_time, 
                                 sample_period, 
-                                sample_start_time)
+                                sample_start_time,
+                                365)
 
 
     config = Config(dtype=torch.float,
@@ -32,6 +33,7 @@ if __name__ == '__main__':
                     delta_t=sample_period/24)
 
     days = len(temps)//(24//sample_period)
+    years = 3
 
     ##############
     # Model Driver
@@ -77,43 +79,57 @@ if __name__ == '__main__':
         adults.init_pop(empty, mu, sigma)
 
         # Run Model
-        for day in range(days):
-            start = day*(24//sample_period)
-            end = (day+1)*(24//sample_period)
-            day_temps = temps[start:end]
-            transfers = prediapause.run_one_step(day_temps)
-            transfers = diapause.run_one_step(day_temps, transfers)
-            transfers = postdiapause.run_one_step(day_temps, transfers)
-            transfers = first_instar.run_one_step(day_temps, transfers)
-            transfers = second_instar.run_one_step(day_temps, transfers)
-            transfers = third_instar.run_one_step(day_temps, transfers)
-            transfers_dif = fourth_instar.run_one_step(day_temps, transfers)
-            transfers = male_late_instar.run_one_step(day_temps, transfers_dif/2)
-            to_adult = male_pupae.run_one_step(day_temps, transfers)
-            transfers = female_late_instar.run_one_step(day_temps, transfers_dif/2)
-            to_adult += female_pupae.run_one_step(day_temps, transfers)
-            transfers = adults.run_one_step(day_temps, to_adult)
-            prediapause.add_transfers(transfers/2)
+        for year in range(years):
+            for day in range(days):
+                start = day*(24//sample_period)
+                end = (day+1)*(24//sample_period)
+                day_temps = temps[start:end]
+                transfers = prediapause.run_one_step(day_temps)
+                transfers = diapause.run_one_step(day_temps, transfers)
+                transfers = postdiapause.run_one_step(day_temps, transfers)
+                transfers = first_instar.run_one_step(day_temps, transfers)
+                transfers = second_instar.run_one_step(day_temps, transfers)
+                transfers = third_instar.run_one_step(day_temps, transfers)
+                transfers_dif = fourth_instar.run_one_step(day_temps, transfers)
+                transfers = male_late_instar.run_one_step(day_temps, transfers_dif/2)
+                to_adult = male_pupae.run_one_step(day_temps, transfers)
+                transfers = female_late_instar.run_one_step(day_temps, transfers_dif/2)
+                to_adult += female_pupae.run_one_step(day_temps, transfers)
+                transfers = adults.run_one_step(day_temps, to_adult)
+                prediapause.add_transfers(transfers/2)
 
-    fig, ax = plt.subplots()
+    fig, axes = plt.subplots(ncols=2, sharey=False)
 
     total_abundance = np.zeros(len(prediapause.abundances))
     for stage in [prediapause, diapause, postdiapause, first_instar, second_instar, third_instar, fourth_instar, 
                   male_late_instar, female_late_instar, male_pupae, female_pupae, adults]:
         total_abundance += np.array(stage.abundances)
+    for year in range(years):
+        axes[0].plot(prediapause.abundances[year*364:(year+1)*365], label='Prediapause', color='blue', linestyle='-')
+        axes[0].plot(diapause.abundances[year*364:(year+1)*365], label='Diapause', color='blue', linestyle='--')
+        axes[0].plot(postdiapause.abundances[year*364:(year+1)*365], label='Postdiapause', color='blue', linestyle=':')
+        axes[0].plot(first_instar.abundances[year*364:(year+1)*365], label='L1', color='orange', linestyle='-')
+        axes[0].plot(second_instar.abundances[year*364:(year+1)*365], label='L2', color='orange', linestyle='--')
+        axes[0].plot(third_instar.abundances[year*364:(year+1)*365], label='L3', color='orange', linestyle=':')
+        axes[0].plot(fourth_instar.abundances[year*364:(year+1)*365], label='L4', color='orange', linestyle='-.')
+        axes[0].plot(male_late_instar.abundances[year*364:(year+1)*365], label='L5 male', color='red', linestyle='-')
+        axes[0].plot(female_late_instar.abundances[year*364:(year+1)*365], label='L5/L6 female', color='yellow', linestyle='-')
+        axes[0].plot(male_pupae.abundances[year*364:(year+1)*365], label='Pupae male', color='red', linestyle='--')
+        axes[0].plot(female_pupae.abundances[year*364:(year+1)*365], label='Pupae female', color='red', linestyle='--')
+        axes[0].plot(adults.abundances[year*364:(year+1)*365], label='Adult', color='brown', linestyle='-')
+        axes[0].plot(total_abundance[year*364:(year+1)*365], label='Total', linestyle='dotted', color='black')
+        axes[0].legend()
+        axes[0].set_title("Sample 2-year Time Series")
 
-    ax.plot(prediapause.abundances, label='Prediapause')
-    ax.plot(diapause.abundances, label='Diapause')
-    ax.plot(postdiapause.abundances, label='Postdiapause')
-    ax.plot(first_instar.abundances, label='L1')
-    ax.plot(second_instar.abundances, label='L2')
-    ax.plot(third_instar.abundances, label='L3')
-    ax.plot(fourth_instar.abundances, label='L4')
-    ax.plot(male_late_instar.abundances, label='L5 male')
-    ax.plot(female_late_instar.abundances, label='L5/L6 female')
-    ax.plot(male_pupae.abundances, label='Pupae male')
-    ax.plot(female_pupae.abundances, label='Pupae female')
-    ax.plot(adults.abundances, label='Adult')
-    ax.plot(total_abundance, label='Total')
-    ax.legend()
+    stage = diapause
+    reduce = True
+    for i in range(0, len(stage.hist_pops), 10):
+        if reduce:
+            pop = stage.hist_pops[i].reshape((config.n_bins, config.n_bins))
+            pop = torch.sum(pop, dim=0)
+        else:
+            pop = stage.hist_pops[i]
+        axes[1].plot(pop)
+    axes[1].set_title("Sample Diapause Age Dists.")
+
     plt.show()

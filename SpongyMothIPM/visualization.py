@@ -71,6 +71,17 @@ def project_plot(kernel, pop, xs, num_gens):
     ax.legend()
     plt.show()
 
+def plot_eigenvector(tensor, n_bins):
+    test = torch.ones(tensor.shape[0])
+    fig, ax = plt.subplots()
+    for i in range(100):
+        test = tensor @ test
+        if i % 10 == 0:
+            D_test = test.reshape((n_bins, n_bins)).sum(dim=1)
+            ax.plot(D_test)
+    plt.show()
+    
+
 if __name__ == '__main__':
     config = Config()
 
@@ -93,21 +104,24 @@ if __name__ == '__main__':
     #              10)
 
     stage = kernels.Diapause(config)
-    kernel = stage.build_kernel([0.0], twoD=False).detach()
+    kernel = stage.build_kernel([30.0], twoD=False).detach()
     tensor4d_to_2d_imshow(
         kernel,
         100,
         (0, 1),
-        (5, 25),
+        (20, 20),
         ("I", "D"),
         one_to_one=True)
     
     # stage = kernels.Diapause(config)
-    # kernel1 = stage.build_kernel([30.0]).detach()
+    # kernel1 = stage.build_kernel([20.0]).detach()
     
     # tensor2d_imshow(kernel1, 
     #                 config.n_bins*config.n_bins,
     #                 config.min_x,
     #                 config.max_x)
 
+    # stage = kernels.Diapause(config)
+    # kernel = stage.build_kernel([30.0]).detach()
 
+    # plot_eigenvectors(kernel, config.n_bins)
