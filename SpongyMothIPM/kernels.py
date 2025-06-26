@@ -3,10 +3,11 @@ import torch
 import SpongyMothIPM.util as util
 
 class _LifeStage():
-    def init_pop(self, position, scale):
+    def init_pop(self, total, position, scale):
         self.pop = util.LnormPDF(self.config.xs, 
                                  torch.tensor(position), 
                                  torch.tensor(scale))
+        self.pop = self.pop*total/self.pop.sum()
         
     def grow_pop(self, temp):
         kernel = self.build_kernel(temp)
@@ -37,6 +38,8 @@ class _LifeStage():
         self.hist_pops.append(self.pop.detach().clone())
 
     def build_kernel(self, temps):
+        if len(temps) == 0:
+            raise Exception("Must provide non-empty temps array to build kernel.")
         mu = torch.tensor(0, dtype=self.config.dtype)
         for temp in temps:
             mu = mu + self.calc_mu(temp)
@@ -131,13 +134,13 @@ class Diapause(_LifeStage):
         mu_I = (
             self.config.delta_t
             * (torch.maximum(
-                -1 + self.config.from_I,
-                (torch.log(rp)
-                * ((1 - self.config.from_I) 
-                    - self.I_0 
-                    - rs)))))
-        mu_I = -1*mu_I # dI*/dt = -dI/dt
-        mu_I = torch.where(mu_I < 0, 0, mu_I)
+                0,
+                -1 * (torch.maximum(
+                    -1 + self.config.from_I,
+                    (torch.log(rp)
+                    * ((1 - self.config.from_I) 
+                        - self.I_0 
+                        - rs))))))
         # Change is expressed over entire input space, since
         # inhibitor depletion does not depend on development rate
         mu_I = torch.tile(mu_I, (1, self.config.n_bins, 1, 1)) 
@@ -163,6 +166,8 @@ class Diapause(_LifeStage):
         return mu_D
 
     def build_kernel(self, temps, twoD=True):
+        if len(temps) == 0:
+            raise Exception("Must provide non-empty temps array to build kernel.")
         # Current strategy is to compute as a 4-D tensor to take advantage of broadcasting, then to 
         # reshape into a 2D matrix to take advantage of matrix multiplication.
         # To simplify calculations, we keep track of 1-I rather than I, so that
@@ -211,7 +216,7 @@ class Diapause(_LifeStage):
         else:
             return kernel_4D
     
-    def init_pop(self, position_I, scale_I, position_D=None, scale_D=None):
+    def init_pop(self, total, position_I, scale_I, position_D=None, scale_D=None):
         if (position_D == None) and (scale_D == None):
             position_D = position_I
             scale_D = scale_I
@@ -222,6 +227,7 @@ class Diapause(_LifeStage):
                               torch.tensor(position_D), 
                               torch.tensor(scale_D))
         self.pop = torch.flatten(pop_I * pop_D)
+        self.pop = self.pop*total/self.pop.sum()
 
     def get_transfers(self):
         pop_2D = torch.reshape(self.pop, self.config.shape)
@@ -245,12 +251,12 @@ class Postdiapause(_LifeStage):
             self.hist_pops = []
 
         ## Assumed Parameters
-        self.tau = torch.tensor(-0.0127)
-        self.delta = torch.tensor(0.00297)
-        self.omega = torch.tensor(-0.08323)
-        self.kappa = torch.tensor(0.01298)
-        self.psi = torch.tensor(0.00099)
-        self.zeta = torch.tensor(-0.00004)
+        self.tau = torch.tensor(3.338182*1e-7)
+        self.delta = torch.tensor(0.390727)
+        self.omega = torch.tensor(-1.821620)
+        self.kappa = torch.tensor(0.373854)
+        self.psi = torch.tensor(-0.0148244286)
+        self.zeta = torch.tensor(0.00001561466667)
         # Starvation of L1 instars prior to finding food
         # Based on Hunter 1993
         self.preincrease = torch.tensor(7.20292573)
@@ -269,7 +275,7 @@ class Postdiapause(_LifeStage):
         mu = (
             self.config.delta_t
             * (torch.maximum(
-                (self.tau + self.delta*temp # R_T(0)
+                (self.tau + torch.exp(self.delta*temp) # R_T(0)
                  + (self.config.from_x
                     * (self.omega 
                        + self.kappa*temp 

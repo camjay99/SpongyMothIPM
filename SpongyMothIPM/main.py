@@ -2,6 +2,7 @@ if __name__ == '__main__':
     import math
 
     import matplotlib.pyplot as plt
+    import numpy as np
     import torch
 
     import SpongyMothIPM.meteorology as met
@@ -30,7 +31,7 @@ if __name__ == '__main__':
                     max_x=1.5,
                     delta_t=sample_period/24)
 
-    days = 10
+    days = len(temps)//(24//sample_period)
 
     ##############
     # Model Driver
@@ -60,18 +61,20 @@ if __name__ == '__main__':
         # Initiate populations
         mu = 0.2
         sigma = 1.1
-        prediapause.init_pop(mu, sigma)
-        diapause.init_pop(mu, sigma, mu, sigma)
-        postdiapause.init_pop(mu, sigma)
-        first_instar.init_pop(mu, sigma)
-        second_instar.init_pop(mu, sigma)
-        third_instar.init_pop(mu, sigma)
-        fourth_instar.init_pop(mu, sigma)
-        male_late_instar.init_pop(mu, sigma)
-        female_late_instar.init_pop(mu, sigma)
-        male_pupae.init_pop(mu, sigma)
-        female_pupae.init_pop(mu, sigma)
-        adults.init_pop(mu, sigma)
+        total = 10
+        empty = 0
+        prediapause.init_pop(total, mu, sigma)
+        diapause.init_pop(empty, mu, sigma)
+        postdiapause.init_pop(empty, mu, sigma)
+        first_instar.init_pop(empty, mu, sigma)
+        second_instar.init_pop(empty, mu, sigma)
+        third_instar.init_pop(empty, mu, sigma)
+        fourth_instar.init_pop(empty, mu, sigma)
+        male_late_instar.init_pop(empty, mu, sigma)
+        female_late_instar.init_pop(empty, mu, sigma)
+        male_pupae.init_pop(empty, mu, sigma)
+        female_pupae.init_pop(empty, mu, sigma)
+        adults.init_pop(empty, mu, sigma)
 
         # Run Model
         for day in range(days):
@@ -80,8 +83,6 @@ if __name__ == '__main__':
             day_temps = temps[start:end]
             transfers = prediapause.run_one_step(day_temps)
             transfers = diapause.run_one_step(day_temps, transfers)
-            print(day_temps)
-            quick_test(diapause, day_temps)
             transfers = postdiapause.run_one_step(day_temps, transfers)
             transfers = first_instar.run_one_step(day_temps, transfers)
             transfers = second_instar.run_one_step(day_temps, transfers)
@@ -92,9 +93,14 @@ if __name__ == '__main__':
             transfers = female_late_instar.run_one_step(day_temps, transfers_dif/2)
             to_adult += female_pupae.run_one_step(day_temps, transfers)
             transfers = adults.run_one_step(day_temps, to_adult)
-            prediapause.add_transfers(transfers)
+            prediapause.add_transfers(transfers/2)
 
     fig, ax = plt.subplots()
+
+    total_abundance = np.zeros(len(prediapause.abundances))
+    for stage in [prediapause, diapause, postdiapause, first_instar, second_instar, third_instar, fourth_instar, 
+                  male_late_instar, female_late_instar, male_pupae, female_pupae, adults]:
+        total_abundance += np.array(stage.abundances)
 
     ax.plot(prediapause.abundances, label='Prediapause')
     ax.plot(diapause.abundances, label='Diapause')
@@ -108,5 +114,6 @@ if __name__ == '__main__':
     ax.plot(male_pupae.abundances, label='Pupae male')
     ax.plot(female_pupae.abundances, label='Pupae female')
     ax.plot(adults.abundances, label='Adult')
+    ax.plot(total_abundance, label='Total')
     ax.legend()
     plt.show()
