@@ -47,8 +47,8 @@ if __name__ == '__main__':
 
     with torch.no_grad():
         # Build life stages
-        prediapause = kernels.Prediapause(config, save=True, file_path='outputs/test.csv', save_rate=1, mortality=0)
-        diapause = kernels.Diapause(config, save=False, mortality=0)
+        prediapause = kernels.Prediapause(config, save=False, mortality=0)
+        diapause = kernels.Diapause(config, save=True, file_path='outputs/test.csv', save_rate=1, mortality=0)
         postdiapause = kernels.Postdiapause(config, save=False, mortality=0)
         first_instar = kernels.FirstInstar(config, save=False, mortality=0)
         second_instar = kernels.SecondInstar(config, save=False, mortality=0)

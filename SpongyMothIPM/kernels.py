@@ -295,6 +295,20 @@ class Diapause(_LifeStage):
         pop_2D += transfers*self.config.input_grid2d
         self.pop = torch.flatten(pop_2D)
 
+    def write(self):
+        # Aggregate outputs into single array and turn convert into
+        # Pandas DataFrame which has nicer writing utilities.
+        arr = np.concatenate(self.hist_pops, axis=0)
+        labels = [f'{x:.{self.precision}e}_{y:.{self.precision}e}' 
+                  for x in self.config.Is for y in self.config.Is]
+        df = pd.DataFrame(data=arr, 
+                          index=self.save_times,
+                          columns=labels)
+        df.to_csv(self.file_path, 
+                  mode='a', # Append to the write file if is exists
+                  header = not os.path.exists(self.file_path), # Add Header once.
+                  float_format=f'{{:.{self.precision}e}}'.format)
+
 
 class Postdiapause(_LifeStage):
     def __init__(self, 

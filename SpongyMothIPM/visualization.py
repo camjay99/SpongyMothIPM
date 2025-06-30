@@ -87,17 +87,30 @@ def plot_eigenvector(tensor, n_bins):
 def compute_abundances(df):
     return df.sum(axis=1)
     
-def plot_abundances(dfs, names):
+def plot_abundances(dfs, names, validation=None):
     fig, ax = plt.subplots()
     for i, df in enumerate(dfs):
         ax.plot(compute_abundances(df), label=names[i])
+    if validation is not None:
+        ax.plot(validation, label='validation')
+    ax.legend()
     plt.show()
 
-def _plot_age_dists(ax, df, times):
+def _plot_age_dists_1D(ax, df, times):
     for time in times:
         ax.plot(df.iloc[time], label=time)
+    ax.legend()
 
-def plot_age_dists(dfs, start=0, end=-1, step=1):
+def _plot_age_dists_2D(ax, df, times, n_bins):
+    for time in times:
+        row = df.iloc[time].to_numpy().reshape((n_bins, n_bins))
+        row = row.sum(axis=0)
+        ax.plot(row, label=time)
+    ax.legend()
+
+def plot_age_dists(dfs, twoD=None, bins=None, start=0, end=-1, step=1):
+    if twoD is None:
+        twoD = [False]*len(dfs)
     if end == -1:
         end = len(dfs[0])
     times = list(range(start, end, step))
@@ -108,7 +121,15 @@ def plot_age_dists(dfs, start=0, end=-1, step=1):
     for i in range(nrows):
         for j in range(ncols):
             if i*ncols + j < len(dfs):
-                _plot_age_dists(axes[i, j], dfs[i*ncols + j], times)
+                if twoD[i*ncols + j]:
+                    _plot_age_dists_2D(axes[i, j], 
+                                       dfs[i*ncols + j], 
+                                       times,
+                                       bins[i*ncols + j])
+                else:
+                    _plot_age_dists_1D(axes[i, j],
+                                       df[i*ncols + j],
+                                       times)
     plt.show()
 
 
@@ -158,5 +179,5 @@ if __name__ == '__main__':
     # plot_eigenvectors(kernel, config.n_bins)
 
     df = pd.read_csv('./outputs/test.csv', header=0, index_col=0)
-    plot_abundances([df], ['Prediapause'])
-    plot_age_dists([df], 0, 10, 1)
+    plot_abundances([df], ['Diapause'])
+    plot_age_dists([df], [True], [100], 260, 280, 2)
