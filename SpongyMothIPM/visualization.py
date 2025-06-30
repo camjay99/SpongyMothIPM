@@ -1,4 +1,7 @@
+from math import ceil
+
 import matplotlib.pyplot as plt
+import pandas as pd
 import torch
 
 from SpongyMothIPM.config import Config
@@ -80,7 +83,35 @@ def plot_eigenvector(tensor, n_bins):
             D_test = test.reshape((n_bins, n_bins)).sum(dim=1)
             ax.plot(D_test)
     plt.show()
+
+def compute_abundances(df):
+    return df.sum(axis=1)
     
+def plot_abundances(dfs, names):
+    fig, ax = plt.subplots()
+    for i, df in enumerate(dfs):
+        ax.plot(compute_abundances(df), label=names[i])
+    plt.show()
+
+def _plot_age_dists(ax, df, times):
+    for time in times:
+        ax.plot(df.iloc[time], label=time)
+
+def plot_age_dists(dfs, start=0, end=-1, step=1):
+    if end == -1:
+        end = len(dfs[0])
+    times = list(range(start, end, step))
+    ncols = min(3, len(dfs))
+    nrows = ceil(len(dfs)/ncols)
+    fig, axes = plt.subplots(ncols=ncols, nrows=nrows, squeeze=False)
+
+    for i in range(nrows):
+        for j in range(ncols):
+            if i*ncols + j < len(dfs):
+                _plot_age_dists(axes[i, j], dfs[i*ncols + j], times)
+    plt.show()
+
+
 
 if __name__ == '__main__':
     config = Config()
@@ -113,15 +144,19 @@ if __name__ == '__main__':
     #     ("I", "D"),
     #     one_to_one=True)
     
-    stage = kernels.Diapause(config)
-    kernel1 = stage.build_kernel([0.0]).detach()
+    # stage = kernels.Diapause(config)
+    # kernel1 = stage.build_kernel([0.0]).detach()
     
-    tensor2d_imshow(kernel1, 
-                    config.n_bins*config.n_bins,
-                    config.min_x,
-                    config.max_x)
+    # tensor2d_imshow(kernel1, 
+    #                 config.n_bins*config.n_bins,
+    #                 config.min_x,
+    #                 config.max_x)
 
     # stage = kernels.Diapause(config)
     # kernel = stage.build_kernel([30.0]).detach()
 
     # plot_eigenvectors(kernel, config.n_bins)
+
+    df = pd.read_csv('./outputs/test.csv', header=0, index_col=0)
+    plot_abundances([df], ['Prediapause'])
+    plot_age_dists([df], 0, 10, 1)

@@ -23,13 +23,13 @@ if __name__ == '__main__':
                                 high_time, 
                                 sample_period, 
                                 sample_start_time,
-                                365)
+                                365*2)
 
 
     config = Config(dtype=torch.float,
                     n_bins=100,
                     min_x=0,
-                    max_x=1.5,
+                    max_x=1,
                     delta_t=sample_period/24)
 
     days = len(temps)//(24//sample_period)
