@@ -1,8 +1,33 @@
+import os
+
+import numpy as np
+import pandas as pd
 import torch
 
 import SpongyMothIPM.util as util
 
 class _LifeStage():
+    def __init__(self, 
+                 config, 
+                 save=False, 
+                 file_path='', 
+                 save_rate=5, 
+                 write_rate=10, 
+                 precision=4):
+        # Config provides global settings and utilities
+        self.config = config
+        # Parameters for saving results
+        self.save = save
+        self.file_path = file_path
+        self.save_times = []
+        self.hist_pops = []
+        self.save_rate = save_rate
+        self.write_rate = write_rate
+        self.precision = precision
+        # Counters for when to save and write
+        self.num_iters = 0
+        self.num_saves = 0
+
     def init_pop(self, total, position, scale):
         self.pop = util.LnormPDF(self.config.xs, 
                                  torch.tensor(position), 
@@ -32,10 +57,29 @@ class _LifeStage():
         outgoing = self.get_transfers()
         self.add_transfers(incoming)
         return outgoing
+    
+    def write(self):
+        # Aggregate outputs into single array and turn convert into
+        # Pandas DataFrame which has nicer writing utilities.
+        arr = np.concatenate(self.hist_pops, axis=0)
+        df = pd.DataFrame(data=arr, 
+                          index=self.save_times,
+                          columns=self.config.xs.numpy())
+        df.to_csv(self.file_path, 
+                  mode='a', # Append to the write file if is exists
+                  header = not os.path.exists(self.file_path), # Add Header once.
+                  float_format=f'{{:.{self.precision}f}}'.format)
 
     def save_pop(self):
-        self.abundances.append(torch.sum(self.pop))
-        self.hist_pops.append(self.pop.detach().clone())
+        if (self.num_iters % self.save_rate) == 0:
+            self.hist_pops.append(self.pop.detach().numpy().reshape(1, -1))
+            self.save_times.append(self.num_iters)
+            self.num_saves += 1
+            if (self.num_saves % self.write_rate) == 0:
+                self.write()
+                self.save_times = []
+                self.hist_pops = []
+        self.num_iters += 1
 
     def build_kernel(self, temps):
         if len(temps) == 0:
@@ -54,12 +98,16 @@ class _LifeStage():
 
 
 class Prediapause(_LifeStage):
-    def __init__(self, config, save=False, sigma=1.1, mortality=0.1):
-        self.config = config
-        self.save = save
-        if save:
-            self.abundances = []
-            self.hist_pops = []
+    def __init__(self, 
+                 config, 
+                 save=False,
+                 file_path='',
+                 save_rate=5, 
+                 write_rate=10, 
+                 precision=4, 
+                 sigma=1.1, 
+                 mortality=0.1):
+        super().__init__(config, save, file_path, save_rate, write_rate, precision)
 
         ## Assumed Parameters
         self.rho = torch.tensor(0.1455)
@@ -89,12 +137,17 @@ class Prediapause(_LifeStage):
     
 
 class Diapause(_LifeStage):
-    def __init__(self, config, save=False, sigma_I=1.1, sigma_D=1.1, mortality=0.1):
-        self.config = config
-        self.save = save
-        if save:
-            self.abundances = []
-            self.hist_pops = []
+    def __init__(self, 
+                 config, 
+                 save=False,
+                 file_path='',
+                 save_rate=5, 
+                 write_rate=10, 
+                 precision=4, 
+                 sigma_I=1.5, 
+                 sigma_D=1.5, 
+                 mortality=0.1):
+        super().__init__(config, save, file_path, save_rate, write_rate, precision)
 
         ## Assumed Parameters
         self.c = torch.tensor(-5.627108200)
@@ -130,17 +183,16 @@ class Diapause(_LifeStage):
         Z = (self.t_max - temp) / (self.t_max - self.t_min)
         rp = 1 + self.rp_c*(torch.exp(Z)**6)
         rs = self.rs_c + self.rs_rp*rp
-        # Here we calculate dI/dt from I* = 1 - I
+        # Here we calculate dI/dt from I* = I_0 - I
         mu_I = (
             self.config.delta_t
             * (torch.maximum(
                 torch.tensor(0.0),
                 -1 * (torch.maximum(
-                    -1 + self.config.from_I,
+                    -self.I_0 + self.config.from_I,
                     (torch.log(rp)
-                    * ((1 - self.config.from_I) 
-                        - self.I_0 
-                        - rs)))))))
+                    * (-self.config.from_I
+                       - rs)))))))
         # Change is expressed over entire input space, since
         # inhibitor depletion does not depend on development rate
         mu_I = torch.tile(mu_I, (1, self.config.n_bins, 1, 1)) 
@@ -162,7 +214,7 @@ class Diapause(_LifeStage):
             self.config.delta_t
             * (torch.maximum(torch.tensor(0),
                             (pdr
-                            * (1 - (1 - self.config.from_I)*A)))))
+                            * (1 - (self.I_0 - self.config.from_I)*A)))))
         return mu_D
 
     def build_kernel(self, temps, twoD=True):
@@ -178,7 +230,8 @@ class Diapause(_LifeStage):
             mu_I = mu_I + self.calc_mu_I(temp)
             mu_D = mu_D + self.calc_mu_D(temp)
         
-        kernel_I_4D = util.LnormCDF(self.config.I_dif, mu_I, self.sigma_I)
+        kernel_I_4D = util.LnormCDF(self.config.I_dif - 1/(2*(self.config.n_bins-1)), 
+                                    mu_I, self.sigma_I)
         kernel_I_4D = torch.diff(kernel_I_4D, 
                             dim=2, 
                             append=torch.ones((self.config.n_bins,
@@ -186,7 +239,8 @@ class Diapause(_LifeStage):
                                                1,
                                                1)))
 
-        kernel_D_4D = util.LnormCDF(self.config.D_dif, mu_D, self.sigma_D)
+        kernel_D_4D = util.LnormCDF(self.config.D_dif - 1/(2*(self.config.n_bins-1)), 
+                                    mu_D, self.sigma_D)
         kernel_D_4D = torch.diff(kernel_D_4D, 
                             dim=3, 
                             append=torch.ones((self.config.n_bins,
@@ -210,7 +264,7 @@ class Diapause(_LifeStage):
                                     (n_bins*n_bins, n_bins*n_bins))
             
             # Also reshape to create means
-            mu = torch.reshape(mu_I*mu_D, (1, n_bins*n_bins))
+            mu = torch.reshape(mu_I+mu_D, (1, n_bins*n_bins))
             kernel_2D = util.validate(kernel_2D, mu)
             return kernel_2D
         else:
@@ -243,12 +297,16 @@ class Diapause(_LifeStage):
 
 
 class Postdiapause(_LifeStage):
-    def __init__(self, config, save=False, sigma=1.1, mortality=0.1):
-        self.config = config
-        self.save = save
-        if save:
-            self.abundances = []
-            self.hist_pops = []
+    def __init__(self, 
+                 config, 
+                 save=False, 
+                 file_path='',
+                 save_rate=5, 
+                 write_rate=10, 
+                 precision=4, 
+                 sigma=1.1, 
+                 mortality=0.1):
+        super().__init__(config, save, file_path, save_rate, write_rate, precision)
 
         ## Assumed Parameters
         self.tau = torch.tensor(3.338182*1e-7)
@@ -294,12 +352,16 @@ class Postdiapause(_LifeStage):
         
 
 class FirstInstar(_LifeStage):
-    def __init__(self, config, save=False, sigma=1.1, mortality=0.1):
-        self.config = config
-        self.save = save
-        if save:
-            self.abundances = []
-            self.hist_pops = []
+    def __init__(self, 
+                 config, 
+                 save=False, 
+                 file_path='',
+                 save_rate=5, 
+                 write_rate=10, 
+                 precision=4, 
+                 sigma=1.1, 
+                 mortality=0.1):
+        super().__init__(config, save, file_path, save_rate, write_rate, precision)
 
         ## Assumed parameters
         self.alpha = torch.tensor(0.9643)
@@ -329,12 +391,16 @@ class FirstInstar(_LifeStage):
         return mu
 
 class SecondInstar(_LifeStage):
-    def __init__(self, config, save=False, sigma=1.1, mortality=0.1):
-        self.config = config
-        self.save = save
-        if save:
-            self.abundances = []
-            self.hist_pops = []
+    def __init__(self, 
+                 config, 
+                 save=False,
+                 file_path='', 
+                 save_rate=5, 
+                 write_rate=10, 
+                 precision=4, 
+                 sigma=1.1, 
+                 mortality=0.1):
+        super().__init__(config, save, file_path, save_rate, write_rate, precision)
 
         ## Assumed parameters
         self.psi = torch.tensor(0.1454)
@@ -363,12 +429,16 @@ class SecondInstar(_LifeStage):
     
     
 class ThirdInstar(_LifeStage):
-    def __init__(self, config, save=False, sigma=1.1, mortality=0.1):
-        self.config = config
-        self.save = save
-        if save:
-            self.abundances = []
-            self.hist_pops = []
+    def __init__(self, 
+                 config, 
+                 save=False, 
+                 file_path='',
+                 save_rate=5, 
+                 write_rate=10, 
+                 precision=4, 
+                 sigma=1.1, 
+                 mortality=0.1):
+        super().__init__(config, save, file_path, save_rate, write_rate, precision)
 
         ## Assumed Parameters
         self.alpha = torch.tensor(1.2039)
@@ -399,12 +469,16 @@ class ThirdInstar(_LifeStage):
 
 
 class FourthInstar(_LifeStage):
-    def __init__(self, config, save=False, sigma=1.1, mortality=0.1):
-        self.config = config
-        self.save = save
-        if save:
-            self.abundances = []
-            self.hist_pops = []
+    def __init__(self, 
+                 config, 
+                 save=False, 
+                 file_path='',
+                 save_rate=5, 
+                 write_rate=10, 
+                 precision=4, 
+                 sigma=1.1, 
+                 mortality=0.1):
+        super().__init__(config, save, file_path, save_rate, write_rate, precision)
 
         ## Assumed Parameters
         self.psi = torch.tensor(0.1120)
@@ -433,12 +507,16 @@ class FourthInstar(_LifeStage):
 
 
 class FemaleFifthSixthInstar(_LifeStage):
-    def __init__(self, config, save=False, sigma=1.1, mortality=0.1):
-        self.config = config
-        self.save = save
-        if save:
-            self.abundances = []
-            self.hist_pops = []
+    def __init__(self, 
+                 config, 
+                 save=False, 
+                 file_path='',
+                 save_rate=5, 
+                 write_rate=10, 
+                 precision=4, 
+                 sigma=1.1, 
+                 mortality=0.1):
+        super().__init__(config, save, file_path, save_rate, write_rate, precision)
 
         ## Assumed Parameters
         self.psi = torch.tensor(0.18496921)
@@ -467,12 +545,16 @@ class FemaleFifthSixthInstar(_LifeStage):
 
     
 class MaleFifthInstar(_LifeStage):
-    def __init__(self, config, save=False, sigma=1.1, mortality=0.1):
-        self.config = config
-        self.save = save
-        if save:
-            self.abundances = []
-            self.hist_pops = []
+    def __init__(self, 
+                 config, 
+                 save=False, 
+                 file_path='',
+                 save_rate=5, 
+                 write_rate=10, 
+                 precision=4, 
+                 sigma=1.1, 
+                 mortality=0.1):
+        super().__init__(config, save, file_path, save_rate, write_rate, precision)
 
         ## Assumed Parameters
         self.psi = torch.tensor(0.1701305)
@@ -501,12 +583,16 @@ class MaleFifthInstar(_LifeStage):
 
 
 class FemalePupae(_LifeStage):
-    def __init__(self, config, save=False, sigma=1.1, mortality=0.1):
-        self.config = config
-        self.save = save
-        if save:
-            self.abundances = []
-            self.hist_pops = []
+    def __init__(self, 
+                 config, 
+                 save=False, 
+                 file_path='',
+                 save_rate=5, 
+                 write_rate=10, 
+                 precision=4, 
+                 sigma=1.1, 
+                 mortality=0.1):
+        super().__init__(config, save, file_path, save_rate, write_rate, precision)
 
         ## Assumed Parameters
         self.psi = torch.tensor(2.00490155e-02)
@@ -535,12 +621,16 @@ class FemalePupae(_LifeStage):
     
     
 class MalePupae(_LifeStage):
-    def __init__(self, config, save=False, sigma=1.1, mortality=0.1):
-        self.config = config
-        self.save = save
-        if save:
-            self.abundances = []
-            self.hist_pops = []
+    def __init__(self, 
+                 config, 
+                 save=False,
+                 file_path='', 
+                 save_rate=5, 
+                 write_rate=10, 
+                 precision=4, 
+                 sigma=1.1, 
+                 mortality=0.1):
+        super().__init__(config, save, file_path, save_rate, write_rate, precision)
 
         ## Assumed Parameters
         self.psi = torch.tensor(1.43475792e-02)
@@ -569,12 +659,16 @@ class MalePupae(_LifeStage):
     
     
 class Adult(_LifeStage):
-    def __init__(self, config, save=False, sigma=1.1, mortality=0.1):
-        self.config = config
-        self.save = save
-        if save:
-            self.abundances = []
-            self.hist_pops = []
+    def __init__(self, 
+                 config, 
+                 save=False, 
+                 file_path='',
+                 save_rate=5, 
+                 write_rate=10, 
+                 precision=4, 
+                 sigma=1.1, 
+                 mortality=0.1):
+        super().__init__(config, save, file_path, save_rate, write_rate, precision)
 
         ## Assumed Parameters
         self.b = torch.tensor(0.062)

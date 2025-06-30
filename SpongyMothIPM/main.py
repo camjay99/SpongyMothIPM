@@ -33,7 +33,7 @@ if __name__ == '__main__':
                     delta_t=sample_period/24)
 
     days = len(temps)//(24//sample_period)
-    years = 3
+    years = 1
 
     ##############
     # Model Driver
@@ -47,18 +47,18 @@ if __name__ == '__main__':
 
     with torch.no_grad():
         # Build life stages
-        prediapause = kernels.Prediapause(config, save=True, mortality=0)
-        diapause = kernels.Diapause(config, save=True, mortality=0)
-        postdiapause = kernels.Postdiapause(config, save=True, mortality=0)
-        first_instar = kernels.FirstInstar(config, save=True, mortality=0)
-        second_instar = kernels.SecondInstar(config, save=True, mortality=0)
-        third_instar = kernels.ThirdInstar(config, save=True, mortality=0)
-        fourth_instar = kernels.FourthInstar(config, save=True, mortality=0)
-        male_late_instar = kernels.MaleFifthInstar(config, save=True, mortality=0)
-        female_late_instar = kernels.FemaleFifthSixthInstar(config, save=True, mortality=0)
-        male_pupae = kernels.MalePupae(config, save=True, mortality=0)
-        female_pupae = kernels.FemalePupae(config, save=True, mortality=0)
-        adults = kernels.Adult(config, save=True, mortality=0)
+        prediapause = kernels.Prediapause(config, save=True, file_path='outputs/test.csv', save_rate=1, mortality=0)
+        diapause = kernels.Diapause(config, save=False, mortality=0)
+        postdiapause = kernels.Postdiapause(config, save=False, mortality=0)
+        first_instar = kernels.FirstInstar(config, save=False, mortality=0)
+        second_instar = kernels.SecondInstar(config, save=False, mortality=0)
+        third_instar = kernels.ThirdInstar(config, save=False, mortality=0)
+        fourth_instar = kernels.FourthInstar(config, save=False, mortality=0)
+        male_late_instar = kernels.MaleFifthInstar(config, save=False, mortality=0)
+        female_late_instar = kernels.FemaleFifthSixthInstar(config, save=False, mortality=0)
+        male_pupae = kernels.MalePupae(config, save=False, mortality=0)
+        female_pupae = kernels.FemalePupae(config, save=False, mortality=0)
+        adults = kernels.Adult(config, save=False, mortality=0)
 
         # Initiate populations
         mu = 0.2

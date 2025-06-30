@@ -103,23 +103,23 @@ if __name__ == '__main__':
     #              SpongyMothIPM.xs, 
     #              10)
 
-    stage = kernels.Diapause(config)
-    kernel = stage.build_kernel([30.0], twoD=False).detach()
-    tensor4d_to_2d_imshow(
-        kernel,
-        100,
-        (0, 1),
-        (20, 20),
-        ("I", "D"),
-        one_to_one=True)
-    
     # stage = kernels.Diapause(config)
-    # kernel1 = stage.build_kernel([20.0]).detach()
+    # kernel = stage.build_kernel([30.0], twoD=False).detach()
+    # tensor4d_to_2d_imshow(
+    #     kernel,
+    #     100,
+    #     (0, 1),
+    #     (20, 20),
+    #     ("I", "D"),
+    #     one_to_one=True)
     
-    # tensor2d_imshow(kernel1, 
-    #                 config.n_bins*config.n_bins,
-    #                 config.min_x,
-    #                 config.max_x)
+    stage = kernels.Diapause(config)
+    kernel1 = stage.build_kernel([0.0]).detach()
+    
+    tensor2d_imshow(kernel1, 
+                    config.n_bins*config.n_bins,
+                    config.min_x,
+                    config.max_x)
 
     # stage = kernels.Diapause(config)
     # kernel = stage.build_kernel([30.0]).detach()
