@@ -90,7 +90,8 @@ def compute_abundances(df):
 def plot_abundances(dfs, names, validation=None):
     fig, ax = plt.subplots()
     for i, df in enumerate(dfs):
-        ax.plot(compute_abundances(df), label=names[i])
+        print(compute_abundances(df))
+        ax.plot(compute_abundances(df).to_numpy(), label=names[i])
     if validation is not None:
         ax.plot(validation, label='validation')
     ax.legend()
@@ -178,6 +179,7 @@ if __name__ == '__main__':
 
     # plot_eigenvectors(kernel, config.n_bins)
 
-    df = pd.read_csv('./outputs/test.csv', header=0, index_col=0)
+    df = pd.read_csv('./outputs/test.csv', header=0, index_col=[0,1])
+    print(df)
     plot_abundances([df], ['Diapause'])
     plot_age_dists([df], [True], [100], 260, 280, 2)

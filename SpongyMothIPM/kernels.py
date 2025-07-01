@@ -19,7 +19,8 @@ class _LifeStage():
         # Parameters for saving results
         self.save = save
         self.file_path = file_path
-        self.save_times = []
+        self.years = []
+        self.ydays = []
         self.hist_pops = []
         self.save_rate = save_rate
         self.write_rate = write_rate
@@ -49,9 +50,12 @@ class _LifeStage():
     def add_transfers(self, transfers=0):
         self.pop += transfers*self.config.input_xs
 
-    def run_one_step(self, temps, incoming=0):
+    def run_one_step(self, met, incoming=0):
+        temps = self._validate_temps(met)
         if self.save:
-            self.save_pop()
+            year = met['year'].iloc[0]
+            yday = met['yday'].iloc[0]
+            self.save_pop(year, yday)
         self.apply_mortality()
         self.grow_pop(temps)
         outgoing = self.get_transfers()
@@ -62,28 +66,43 @@ class _LifeStage():
         # Aggregate outputs into single array and turn convert into
         # Pandas DataFrame which has nicer writing utilities.
         arr = np.concatenate(self.hist_pops, axis=0)
+        index = pd.MultiIndex.from_arrays([self.years, self.ydays],
+                                          names=['year', 'yday'])
         df = pd.DataFrame(data=arr, 
-                          index=self.save_times,
+                          index=index,
                           columns=self.config.xs.numpy())
         df.to_csv(self.file_path, 
                   mode='a', # Append to the write file if is exists
                   header = not os.path.exists(self.file_path), # Add Header once.
                   float_format=f'{{:.{self.precision}f}}'.format)
 
-    def save_pop(self):
+    def save_pop(self, year, yday):
         if (self.num_iters % self.save_rate) == 0:
             self.hist_pops.append(self.pop.detach().numpy().reshape(1, -1))
-            self.save_times.append(self.num_iters)
+            self.years.append(year)
+            self.ydays.append(yday)
             self.num_saves += 1
             if (self.num_saves % self.write_rate) == 0:
                 self.write()
-                self.save_times = []
+                self.years = []
+                self.ydays = []
                 self.hist_pops = []
         self.num_iters += 1
 
-    def build_kernel(self, temps):
+    def _validate_temps(self, met):
+        if type(met) is pd.DataFrame:
+            # Check that all day nums are the same
+            days = met['yday'].to_numpy()
+            if (days[0] != days).any():
+                raise Exception("Provided temps must correspond to a single day.")
+            temps = met['temp']
+        else:
+            temps = met
         if len(temps) == 0:
             raise Exception("Must provide non-empty temps array to build kernel.")
+        return temps
+    
+    def build_kernel(self, temps):
         mu = torch.tensor(0, dtype=self.config.dtype)
         for temp in temps:
             mu = mu + self.calc_mu(temp)
@@ -218,8 +237,6 @@ class Diapause(_LifeStage):
         return mu_D
 
     def build_kernel(self, temps, twoD=True):
-        if len(temps) == 0:
-            raise Exception("Must provide non-empty temps array to build kernel.")
         # Current strategy is to compute as a 4-D tensor to take advantage of broadcasting, then to 
         # reshape into a 2D matrix to take advantage of matrix multiplication.
         # To simplify calculations, we keep track of 1-I rather than I, so that
@@ -301,8 +318,10 @@ class Diapause(_LifeStage):
         arr = np.concatenate(self.hist_pops, axis=0)
         labels = [f'{x:.{self.precision}e}_{y:.{self.precision}e}' 
                   for x in self.config.Is for y in self.config.Is]
+        index = pd.MultiIndex.from_arrays([self.years, self.ydays],
+                                          names=['year', 'yday'])
         df = pd.DataFrame(data=arr, 
-                          index=self.save_times,
+                          index=index,
                           columns=labels)
         df.to_csv(self.file_path, 
                   mode='a', # Append to the write file if is exists

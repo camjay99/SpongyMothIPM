@@ -83,7 +83,7 @@ if __name__ == '__main__':
             for day in range(days):
                 start = day*(24//sample_period)
                 end = (day+1)*(24//sample_period)
-                day_temps = temps[start:end]
+                day_temps = temps.iloc[start:end]
                 transfers = prediapause.run_one_step(day_temps)
                 transfers = diapause.run_one_step(day_temps, transfers)
                 transfers = postdiapause.run_one_step(day_temps, transfers)
