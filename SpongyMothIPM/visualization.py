@@ -87,15 +87,44 @@ def plot_eigenvector(tensor, n_bins):
 def compute_abundances(df):
     return df.sum(axis=1)
     
-def plot_abundances(dfs, names, validation=None):
-    fig, ax = plt.subplots()
+def plot_abundances(ax, 
+                    dfs, 
+                    names, 
+                    styles,
+                    validation=None, 
+                    normalize=False,
+                    legend=False,
+                    tick_start=0,
+                    tick_freq=10,
+                    zero_based=True,
+                    tick_fontsize=20,
+                    label_fontsize=20):
+    # Plot abundances
     for i, df in enumerate(dfs):
-        print(compute_abundances(df))
-        ax.plot(compute_abundances(df).to_numpy(), label=names[i])
+        abundances = compute_abundances(df)
+        if normalize:
+            abundances = abundances / abundances.max()
+        ax.plot(abundances.to_numpy(), 
+                label=names[i],
+                **(styles[i]))
+        
+    # Set tick labels
+    ax.set_xticks(range(tick_start, len(abundances), tick_freq), 
+                  abundances.index.get_level_values('yday')[tick_start::tick_freq]-int(zero_based))
+    ax.tick_params(labelsize=tick_fontsize)
+    ax.xaxis.grid(True, which='major', color='lightgray')
+
+    # Set axis labels
+    ax.set_xlabel("Day of Year", fontsize=label_fontsize)
+    ax.set_ylabel("Population Density", fontsize=label_fontsize)
+
+    # Plot validation points
     if validation is not None:
-        ax.plot(validation, label='validation')
-    ax.legend()
-    plt.show()
+        ax.plot(validation['doy'], 
+                validation['hatch'], 
+                label='validation')
+    if legend:
+        ax.legend()
 
 def _plot_age_dists_1D(ax, df, times):
     for time in times:
@@ -179,7 +208,10 @@ if __name__ == '__main__':
 
     # plot_eigenvectors(kernel, config.n_bins)
 
-    df = pd.read_csv('./outputs/test.csv', header=0, index_col=[0,1])
-    print(df)
-    plot_abundances([df], ['Diapause'])
-    plot_age_dists([df], [True], [100], 260, 280, 2)
+    df = pd.read_csv('./outputs/mont_st_hilaire/first_instar_50_50.csv', header=0, index_col=[0,1])
+    df_year = df[df.index.get_level_values('year') == 1990]
+    valid = pd.read_csv('./data/mont_st_hilaire/hilaire_90.csv')
+    print(df_year)
+    fig, ax = plt.subplots()
+    plot_abundances(ax, [df_year], ['First Instar'], valid, True)
+    #plot_age_dists([df], [True], [100], 260, 280, 2)

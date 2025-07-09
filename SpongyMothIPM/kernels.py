@@ -8,7 +8,7 @@ import SpongyMothIPM.util as util
 
 class _LifeStage():
     def __init__(self, 
-                 config, 
+                 config,
                  save=False, 
                  file_path='', 
                  save_rate=5, 
@@ -19,6 +19,8 @@ class _LifeStage():
         # Parameters for saving results
         self.save = save
         self.file_path = file_path
+        if self.file_path == 'memory':
+            self.saved_pops = []
         self.years = []
         self.ydays = []
         self.hist_pops = []
@@ -28,9 +30,22 @@ class _LifeStage():
         # Counters for when to save and write
         self.num_iters = 0
         self.num_saves = 0
+    
+    def init_kernel_helpers(self, n_bins, min_x, max_x):
+        self.n_bins = n_bins
+        self.min_x = min_x
+        self.max_x = max_x
+        self.shape = (self.n_bins, self.n_bins)
+        self.xs = torch.linspace(self.min_x, self.max_x, self.n_bins)
+        self.xs_for_transfer = self.xs >= 1
+        self.input_xs = torch.zeros_like(self.xs)
+        self.input_xs[0] = 1
+        self.from_x = torch.reshape(self.xs, (1, self.n_bins))
+        self.to_x = torch.reshape(self.xs, (self.n_bins, 1))
+        self.x_dif = torch.maximum(torch.tensor(0), self.to_x - self.from_x)
 
     def init_pop(self, total, position, scale):
-        self.pop = util.LnormPDF(self.config.xs, 
+        self.pop = util.LnormPDF(self.xs, 
                                  torch.tensor(position), 
                                  torch.tensor(scale))
         self.pop = self.pop*total/self.pop.sum()
@@ -43,12 +58,12 @@ class _LifeStage():
         self.pop *= 1 - self.mortality
 
     def get_transfers(self):
-        transfers = torch.sum(self.pop*self.config.xs_for_transfer)
-        self.pop *= ~self.config.xs_for_transfer
+        transfers = torch.sum(self.pop*self.xs_for_transfer)
+        self.pop *= ~self.xs_for_transfer
         return transfers
         
     def add_transfers(self, transfers=0):
-        self.pop += transfers*self.config.input_xs
+        self.pop += transfers*self.input_xs
 
     def run_one_step(self, met, incoming=0):
         temps = self._validate_temps(met)
@@ -63,22 +78,27 @@ class _LifeStage():
         return outgoing
     
     def write(self):
-        # Aggregate outputs into single array and turn convert into
-        # Pandas DataFrame which has nicer writing utilities.
-        arr = np.concatenate(self.hist_pops, axis=0)
-        index = pd.MultiIndex.from_arrays([self.years, self.ydays],
-                                          names=['year', 'yday'])
-        df = pd.DataFrame(data=arr, 
-                          index=index,
-                          columns=self.config.xs.numpy())
-        df.to_csv(self.file_path, 
-                  mode='a', # Append to the write file if is exists
-                  header = not os.path.exists(self.file_path), # Add Header once.
-                  float_format=f'{{:.{self.precision}f}}'.format)
+        if self.file_path == 'memory':
+            self.saved_pops.extend(self.hist_pops)
+        else:
+            # Aggregate outputs into single array and turn convert into
+            # Pandas DataFrame which has nicer writing utilities.
+            hist_pops = [pop.detach().numpy().reshape(1, -1) 
+                         for pop in self.hist_pops]
+            arr = np.concatenate(self.hist_pops, axis=0)
+            index = pd.MultiIndex.from_arrays([self.years, self.ydays],
+                                            names=['year', 'yday'])
+            df = pd.DataFrame(data=arr, 
+                            index=index,
+                            columns=self.xs.numpy())
+            df.to_csv(self.file_path, 
+                    mode='a', # Append to the write file if is exists
+                    header = not os.path.exists(self.file_path), # Add Header once.
+                    float_format=f'{{:.{self.precision}f}}'.format)
 
     def save_pop(self, year, yday):
         if (self.num_iters % self.save_rate) == 0:
-            self.hist_pops.append(self.pop.detach().numpy().reshape(1, -1))
+            self.hist_pops.append(self.pop)
             self.years.append(year)
             self.ydays.append(yday)
             self.num_saves += 1
@@ -106,12 +126,12 @@ class _LifeStage():
         mu = torch.tensor(0, dtype=self.config.dtype)
         for temp in temps:
             mu = mu + self.calc_mu(temp)
-        kernel = util.LnormCDF(self.config.x_dif - 1/(2*(self.config.n_bins-1)), 
+        kernel = util.LnormCDF(self.x_dif - 1/(2*(self.n_bins-1)), 
                                mu, self.sigma)
         kernel = torch.diff(kernel, 
                             dim=0, 
                             append=torch.ones((1,
-                                               self.config.n_bins)))
+                                               self.n_bins)))
         kernel = util.validate(kernel, mu)
         return kernel
 
@@ -119,6 +139,9 @@ class _LifeStage():
 class Prediapause(_LifeStage):
     def __init__(self, 
                  config, 
+                 n_bins=100,
+                 min_x=0,
+                 max_x=1,
                  save=False,
                  file_path='',
                  save_rate=5, 
@@ -127,6 +150,7 @@ class Prediapause(_LifeStage):
                  sigma=1.1, 
                  mortality=0.1):
         super().__init__(config, save, file_path, save_rate, write_rate, precision)
+        self.init_kernel_helpers(n_bins, min_x, max_x)
 
         ## Assumed Parameters
         self.rho = torch.tensor(0.1455)
@@ -158,6 +182,12 @@ class Prediapause(_LifeStage):
 class Diapause(_LifeStage):
     def __init__(self, 
                  config, 
+                 n_bins_I=100, 
+                 min_I=0,
+                 max_I=1.1880,
+                 n_bins_D=100, 
+                 min_D=0,
+                 max_D=1,
                  save=False,
                  file_path='',
                  save_rate=5, 
@@ -167,6 +197,8 @@ class Diapause(_LifeStage):
                  sigma_D=1.5, 
                  mortality=0.1):
         super().__init__(config, save, file_path, save_rate, write_rate, precision)
+
+        self.init_kernel_helpers(n_bins_I, min_I, max_I, n_bins_D, min_D, max_D)
 
         ## Assumed Parameters
         self.c = torch.tensor(-5.627108200)
@@ -195,8 +227,35 @@ class Diapause(_LifeStage):
                                     dtype=self.config.dtype, 
                                     requires_grad=True)
         self.mortality = torch.tensor(mortality, 
-                                      dtype=config.dtype, 
+                                      dtype=self.config.dtype, 
                                       requires_grad=True)
+        
+    def init_kernel_helpers(self, 
+                            n_bins_I, 
+                            min_I, 
+                            max_I, 
+                            n_bins_D, 
+                            min_D, 
+                            max_D):
+        self.n_bins_I = n_bins_I
+        self.min_I = min_I
+        self.max_I = max_I
+        self.n_bins_D = n_bins_D
+        self.min_D = min_D
+        self.max_D = max_D
+        self.shape = (n_bins_I, n_bins_D)
+        self.Is = torch.linspace(min_I, max_I, n_bins_I)
+        self.Ds = torch.linspace(min_D, max_D, n_bins_D)
+        self.from_I = torch.reshape(self.Is, (n_bins_I, 1, 1, 1))
+        self.to_I = torch.reshape(self.Is, (1, 1, n_bins_I, 1))
+        self.from_D = torch.reshape(self.Ds, (1, n_bins_D, 1, 1))
+        self.to_D = torch.reshape(self.Ds, (1, 1, 1, n_bins_D))
+        self.I_dif = torch.maximum(torch.tensor(0), self.to_I - self.from_I)
+        self.D_dif = torch.maximum(torch.tensor(0), self.to_D - self.from_D)
+        self.grid2d = torch.squeeze(torch.ones_like(self.from_I)*self.from_D)
+        self.grid2d_for_transfer = self.grid2d >= 1
+        self.input_grid2d = torch.zeros_like(self.grid2d)
+        self.input_grid2d[0, 0] = 1
 
     def calc_mu_I(self, temp):
         Z = (self.t_max - temp) / (self.t_max - self.t_min)
@@ -208,13 +267,13 @@ class Diapause(_LifeStage):
             * (torch.maximum(
                 torch.tensor(0.0),
                 -1 * (torch.maximum(
-                    -self.I_0 + self.config.from_I,
+                    -self.I_0 + self.from_I,
                     (torch.log(rp)
-                    * (-self.config.from_I
+                    * (-self.from_I
                        - rs)))))))
         # Change is expressed over entire input space, since
         # inhibitor depletion does not depend on development rate
-        mu_I = torch.tile(mu_I, (1, self.config.n_bins, 1, 1)) 
+        mu_I = torch.tile(mu_I, (1, self.n_bins_D, 1, 1)) 
         return mu_I
     
     def calc_mu_D(self, temp):
@@ -233,7 +292,7 @@ class Diapause(_LifeStage):
             self.config.delta_t
             * (torch.maximum(torch.tensor(0),
                             (pdr
-                            * (1 - (self.I_0 - self.config.from_I)*A)))))
+                            * (1 - (self.I_0 - self.from_I)*A)))))
         return mu_D
 
     def build_kernel(self, temps, twoD=True):
@@ -247,21 +306,21 @@ class Diapause(_LifeStage):
             mu_I = mu_I + self.calc_mu_I(temp)
             mu_D = mu_D + self.calc_mu_D(temp)
         
-        kernel_I_4D = util.LnormCDF(self.config.I_dif - 1/(2*(self.config.n_bins-1)), 
+        kernel_I_4D = util.LnormCDF(self.I_dif - 1/(2*(self.n_bins_I-1)), 
                                     mu_I, self.sigma_I)
         kernel_I_4D = torch.diff(kernel_I_4D, 
                             dim=2, 
-                            append=torch.ones((self.config.n_bins,
-                                               self.config.n_bins,
+                            append=torch.ones((self.n_bins_I,
+                                               self.n_bins_D,
                                                1,
                                                1)))
 
-        kernel_D_4D = util.LnormCDF(self.config.D_dif - 1/(2*(self.config.n_bins-1)), 
+        kernel_D_4D = util.LnormCDF(self.D_dif - 1/(2*(self.n_bins_D-1)), 
                                     mu_D, self.sigma_D)
         kernel_D_4D = torch.diff(kernel_D_4D, 
                             dim=3, 
-                            append=torch.ones((self.config.n_bins,
-                                               self.config.n_bins,
+                            append=torch.ones((self.n_bins_I,
+                                               self.n_bins_D,
                                                1,
                                                1)))
 
@@ -273,15 +332,17 @@ class Diapause(_LifeStage):
         if twoD:
             # Need to reshape kernel so that it can be 
             # used in matrix-vector multiplication.
-            n_bins = self.config.n_bins
             kernel_2D = torch.reshape(kernel_4D, 
-                                    (n_bins, n_bins, n_bins*n_bins))
+                                      (self.n_bins_I, 
+                                       self.n_bins_D, 
+                                       self.n_bins_I*self.n_bins_D))
             kernel_2D = torch.permute(kernel_2D, (2, 0, 1))
             kernel_2D = torch.reshape(kernel_2D, 
-                                    (n_bins*n_bins, n_bins*n_bins))
+                                      (self.n_bins_I*self.n_bins_D, 
+                                       self.n_bins_I*self.n_bins_D))
             
             # Also reshape to create means
-            mu = torch.reshape(mu_I+mu_D, (1, n_bins*n_bins))
+            mu = torch.reshape(mu_I+mu_D, (1, self.n_bins_I*self.n_bins_D))
             kernel_2D = util.validate(kernel_2D, mu)
             return kernel_2D
         else:
@@ -291,25 +352,25 @@ class Diapause(_LifeStage):
         if (position_D == None) and (scale_D == None):
             position_D = position_I
             scale_D = scale_I
-        pop_I = util.LnormPDF(self.config.to_x, 
+        pop_I = util.LnormPDF(self.from_I, 
                               torch.tensor(position_I), 
                               torch.tensor(scale_I))
-        pop_D = util.LnormPDF(self.config.from_x, 
+        pop_D = util.LnormPDF(self.from_D, 
                               torch.tensor(position_D), 
                               torch.tensor(scale_D))
         self.pop = torch.flatten(pop_I * pop_D)
         self.pop = self.pop*total/self.pop.sum()
 
     def get_transfers(self):
-        pop_2D = torch.reshape(self.pop, self.config.shape)
-        transfers = torch.sum(pop_2D*self.config.grid2d_for_transfer)
-        pop_2D *= ~self.config.grid2d_for_transfer
+        pop_2D = torch.reshape(self.pop, self.shape)
+        transfers = torch.sum(pop_2D*self.grid2d_for_transfer)
+        pop_2D *= ~self.grid2d_for_transfer
         self.pop = torch.flatten(pop_2D)
         return transfers
 
     def add_transfers(self, transfers=0):
-        pop_2D = torch.reshape(self.pop, self.config.shape)
-        pop_2D += transfers*self.config.input_grid2d
+        pop_2D = torch.reshape(self.pop, self.shape)
+        pop_2D += transfers*self.input_grid2d
         self.pop = torch.flatten(pop_2D)
 
     def write(self):
@@ -317,7 +378,7 @@ class Diapause(_LifeStage):
         # Pandas DataFrame which has nicer writing utilities.
         arr = np.concatenate(self.hist_pops, axis=0)
         labels = [f'{x:.{self.precision}e}_{y:.{self.precision}e}' 
-                  for x in self.config.Is for y in self.config.Is]
+                  for x in self.Is for y in self.Ds]
         index = pd.MultiIndex.from_arrays([self.years, self.ydays],
                                           names=['year', 'yday'])
         df = pd.DataFrame(data=arr, 
@@ -332,6 +393,9 @@ class Diapause(_LifeStage):
 class Postdiapause(_LifeStage):
     def __init__(self, 
                  config, 
+                 n_bins=100,
+                 min_x=0,
+                 max_x=1,
                  save=False, 
                  file_path='',
                  save_rate=5, 
@@ -340,6 +404,7 @@ class Postdiapause(_LifeStage):
                  sigma=1.1, 
                  mortality=0.1):
         super().__init__(config, save, file_path, save_rate, write_rate, precision)
+        self.init_kernel_helpers(n_bins, min_x, max_x)
 
         ## Assumed Parameters
         self.tau = torch.tensor(3.338182*1e-7)
@@ -367,7 +432,7 @@ class Postdiapause(_LifeStage):
             self.config.delta_t
             * (torch.maximum(
                 (self.tau + torch.exp(self.delta*temp) # R_T(0)
-                 + (self.config.from_x
+                 + (self.from_x
                     * (self.omega 
                        + self.kappa*temp 
                        + self.psi*temp**2 
@@ -386,7 +451,10 @@ class Postdiapause(_LifeStage):
 
 class FirstInstar(_LifeStage):
     def __init__(self, 
-                 config, 
+                 config,
+                 n_bins=100,
+                 min_x=0,
+                 max_x=1, 
                  save=False, 
                  file_path='',
                  save_rate=5, 
@@ -395,6 +463,7 @@ class FirstInstar(_LifeStage):
                  sigma=1.1, 
                  mortality=0.1):
         super().__init__(config, save, file_path, save_rate, write_rate, precision)
+        self.init_kernel_helpers(n_bins, min_x, max_x)
 
         ## Assumed parameters
         self.alpha = torch.tensor(0.9643)
@@ -426,6 +495,9 @@ class FirstInstar(_LifeStage):
 class SecondInstar(_LifeStage):
     def __init__(self, 
                  config, 
+                 n_bins=100,
+                 min_x=0,
+                 max_x=1,
                  save=False,
                  file_path='', 
                  save_rate=5, 
@@ -434,6 +506,7 @@ class SecondInstar(_LifeStage):
                  sigma=1.1, 
                  mortality=0.1):
         super().__init__(config, save, file_path, save_rate, write_rate, precision)
+        self.init_kernel_helpers(n_bins, min_x, max_x)
 
         ## Assumed parameters
         self.psi = torch.tensor(0.1454)
@@ -463,7 +536,10 @@ class SecondInstar(_LifeStage):
     
 class ThirdInstar(_LifeStage):
     def __init__(self, 
-                 config, 
+                 config,
+                 n_bins=100,
+                 min_x=0,
+                 max_x=1, 
                  save=False, 
                  file_path='',
                  save_rate=5, 
@@ -472,6 +548,7 @@ class ThirdInstar(_LifeStage):
                  sigma=1.1, 
                  mortality=0.1):
         super().__init__(config, save, file_path, save_rate, write_rate, precision)
+        self.init_kernel_helpers(n_bins, min_x, max_x)
 
         ## Assumed Parameters
         self.alpha = torch.tensor(1.2039)
@@ -504,6 +581,9 @@ class ThirdInstar(_LifeStage):
 class FourthInstar(_LifeStage):
     def __init__(self, 
                  config, 
+                 n_bins=100,
+                 min_x=0,
+                 max_x=1,
                  save=False, 
                  file_path='',
                  save_rate=5, 
@@ -512,6 +592,7 @@ class FourthInstar(_LifeStage):
                  sigma=1.1, 
                  mortality=0.1):
         super().__init__(config, save, file_path, save_rate, write_rate, precision)
+        self.init_kernel_helpers(n_bins, min_x, max_x)
 
         ## Assumed Parameters
         self.psi = torch.tensor(0.1120)
@@ -542,6 +623,9 @@ class FourthInstar(_LifeStage):
 class FemaleFifthSixthInstar(_LifeStage):
     def __init__(self, 
                  config, 
+                 n_bins=100,
+                 min_x=0,
+                 max_x=1,
                  save=False, 
                  file_path='',
                  save_rate=5, 
@@ -550,6 +634,7 @@ class FemaleFifthSixthInstar(_LifeStage):
                  sigma=1.1, 
                  mortality=0.1):
         super().__init__(config, save, file_path, save_rate, write_rate, precision)
+        self.init_kernel_helpers(n_bins, min_x, max_x)
 
         ## Assumed Parameters
         self.psi = torch.tensor(0.18496921)
@@ -580,6 +665,9 @@ class FemaleFifthSixthInstar(_LifeStage):
 class MaleFifthInstar(_LifeStage):
     def __init__(self, 
                  config, 
+                 n_bins=100,
+                 min_x=0,
+                 max_x=1,
                  save=False, 
                  file_path='',
                  save_rate=5, 
@@ -588,6 +676,7 @@ class MaleFifthInstar(_LifeStage):
                  sigma=1.1, 
                  mortality=0.1):
         super().__init__(config, save, file_path, save_rate, write_rate, precision)
+        self.init_kernel_helpers(n_bins, min_x, max_x)
 
         ## Assumed Parameters
         self.psi = torch.tensor(0.1701305)
@@ -618,6 +707,9 @@ class MaleFifthInstar(_LifeStage):
 class FemalePupae(_LifeStage):
     def __init__(self, 
                  config, 
+                 n_bins=100,
+                 min_x=0,
+                 max_x=1,
                  save=False, 
                  file_path='',
                  save_rate=5, 
@@ -626,6 +718,7 @@ class FemalePupae(_LifeStage):
                  sigma=1.1, 
                  mortality=0.1):
         super().__init__(config, save, file_path, save_rate, write_rate, precision)
+        self.init_kernel_helpers(n_bins, min_x, max_x)
 
         ## Assumed Parameters
         self.psi = torch.tensor(2.00490155e-02)
@@ -656,6 +749,9 @@ class FemalePupae(_LifeStage):
 class MalePupae(_LifeStage):
     def __init__(self, 
                  config, 
+                 n_bins=100,
+                 min_x=0,
+                 max_x=1,
                  save=False,
                  file_path='', 
                  save_rate=5, 
@@ -664,6 +760,7 @@ class MalePupae(_LifeStage):
                  sigma=1.1, 
                  mortality=0.1):
         super().__init__(config, save, file_path, save_rate, write_rate, precision)
+        self.init_kernel_helpers(n_bins, min_x, max_x)
 
         ## Assumed Parameters
         self.psi = torch.tensor(1.43475792e-02)
@@ -694,6 +791,9 @@ class MalePupae(_LifeStage):
 class Adult(_LifeStage):
     def __init__(self, 
                  config, 
+                 n_bins=100,
+                 min_x=0,
+                 max_x=1,
                  save=False, 
                  file_path='',
                  save_rate=5, 
@@ -702,6 +802,7 @@ class Adult(_LifeStage):
                  sigma=1.1, 
                  mortality=0.1):
         super().__init__(config, save, file_path, save_rate, write_rate, precision)
+        self.init_kernel_helpers(n_bins, min_x, max_x)
 
         ## Assumed Parameters
         self.b = torch.tensor(0.062)

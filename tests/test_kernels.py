@@ -62,6 +62,13 @@ def test_lower_triangular(life_stage, temp, request):
     kernel = life_stage.build_kernel([temp]).detach()
     torch.testing.assert_close(kernel, torch.tril(kernel)) 
 
+def test_eigenvector(diapause, temp):
+    kernel = diapause.build_kernel([temp]).detach()
+    values, vectors = torch.eig(kernel)
+    print(values)
+    print(vectors)
+    assert False
+
 # def test_transfer():
 #     pop0 = main.LnormPDF(main.xs, torch.tensor(0.90), torch.tensor(1.1))
 #     pop1 = main.LnormPDF(main.xs, torch.tensor(0.4), torch.tensor(1.1))
