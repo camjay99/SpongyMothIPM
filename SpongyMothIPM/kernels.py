@@ -55,15 +55,15 @@ class _LifeStage():
         self.pop = kernel @ self.pop
 
     def apply_mortality(self):
-        self.pop *= 1 - self.mortality
+        self.pop = self.pop*(1 - self.mortality)
 
     def get_transfers(self):
         transfers = torch.sum(self.pop*self.xs_for_transfer)
-        self.pop *= ~self.xs_for_transfer
+        self.pop = self.pop*~self.xs_for_transfer
         return transfers
         
     def add_transfers(self, transfers=0):
-        self.pop += transfers*self.input_xs
+        self.pop = self.pop + transfers*self.input_xs
 
     def run_one_step(self, met, incoming=0):
         temps = self._validate_temps(met)
@@ -83,9 +83,9 @@ class _LifeStage():
         else:
             # Aggregate outputs into single array and turn convert into
             # Pandas DataFrame which has nicer writing utilities.
-            hist_pops = [pop.detach().numpy().reshape(1, -1) 
+            hist_pops = [pop.numpy().reshape(1, -1) 
                          for pop in self.hist_pops]
-            arr = np.concatenate(self.hist_pops, axis=0)
+            arr = np.concatenate(hist_pops, axis=0)
             index = pd.MultiIndex.from_arrays([self.years, self.ydays],
                                             names=['year', 'yday'])
             df = pd.DataFrame(data=arr, 
@@ -98,7 +98,7 @@ class _LifeStage():
 
     def save_pop(self, year, yday):
         if (self.num_iters % self.save_rate) == 0:
-            self.hist_pops.append(self.pop)
+            self.hist_pops.append(self.pop.detach())
             self.years.append(year)
             self.ydays.append(yday)
             self.num_saves += 1
@@ -364,13 +364,13 @@ class Diapause(_LifeStage):
     def get_transfers(self):
         pop_2D = torch.reshape(self.pop, self.shape)
         transfers = torch.sum(pop_2D*self.grid2d_for_transfer)
-        pop_2D *= ~self.grid2d_for_transfer
+        pop_2D = pop_2D*~self.grid2d_for_transfer
         self.pop = torch.flatten(pop_2D)
         return transfers
 
     def add_transfers(self, transfers=0):
         pop_2D = torch.reshape(self.pop, self.shape)
-        pop_2D += transfers*self.input_grid2d
+        pop_2D = pop_2D + transfers*self.input_grid2d
         self.pop = torch.flatten(pop_2D)
 
     def write(self):
