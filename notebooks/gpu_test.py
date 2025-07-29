@@ -1,4 +1,5 @@
 import math
+import time
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -16,30 +17,30 @@ class SimpleModel():
     def __init__(self):
         # Build life stages
         self.prediapause = kernels.Prediapause(
-            config, save=False, save_rate=1, mortality=0)
+            config, save=False, save_rate=1, mortality=0, sigma=1.0516)
         self.diapause = kernels.Diapause(
-            config, n_bins_I=50, n_bins_D=50, save=False, save_rate=1, mortality=0)
+            config, n_bins_I=50, n_bins_D=50, save=False, save_rate=1, mortality=0, sigma_I=1.5501, sigma_D=1.5500)
         self.postdiapause = kernels.Postdiapause(
-            config, save=False, save_rate=1, mortality=0)
+            config, save=False, save_rate=1, mortality=0, sigma=1.0543)
         self.first_instar = kernels.FirstInstar(
             config, save=False, save_rate=1, mortality=0, 
-            file_path='../outputs/mont_st_hilaire/first_instar.csv')
+            file_path='../outputs/mont_st_hilaire/first_instar.csv', sigma=1.1458)
         self.second_instar = kernels.SecondInstar(
-            config, save=False, save_rate=1, mortality=0)
+            config, save=False, save_rate=1, mortality=0, sigma=1.1483)
         self.third_instar = kernels.ThirdInstar(
-            config, save=False, save_rate=1, mortality=0)
+            config, save=False, save_rate=1, mortality=0, sigma=1.0491)
         self.fourth_instar = kernels.FourthInstar(
-            config, save=False, save_rate=1, mortality=0)
+            config, save=False, save_rate=1, mortality=0, sigma=1.0468)
         self.male_late_instar = kernels.MaleFifthInstar(
-            config, save=False, save_rate=1, mortality=0)
+            config, save=False, save_rate=1, mortality=0, sigma=1.0449)
         self.female_late_instar = kernels.FemaleFifthSixthInstar(
-            config, save=False, save_rate=1, mortality=0)
+            config, save=False, save_rate=1, mortality=0, sigma=1.1476)
         self.male_pupae = kernels.MalePupae(
-            config, save=False, save_rate=1, mortality=0)
+            config, save=False, save_rate=1, mortality=0, sigma=1.0474)
         self.female_pupae = kernels.FemalePupae(
-            config, save=False, save_rate=1, mortality=0)
+            config, save=False, save_rate=1, mortality=0, sigma=1.1211)
         self.adults = kernels.Adult(
-            config, save=False, save_rate=1, mortality=0)
+            config, save=False, save_rate=1, mortality=0, sigma=1.1469)
         
         # Gather parameters together for optimization.
         self.parameters = [self.prediapause.sigma,
@@ -233,7 +234,8 @@ class SimpleModel():
 
 def run_adam(model, lr, num_iters, validation, year, verbose=False):
     optim = torch.optim.Adam(model.parameters, lr=lr)
-
+    
+    time1 = time.time()
     for i in range(num_iters):
         model.init_pop()
         model.forward(300, 1988, 0, 1990, 365, False)
@@ -243,37 +245,38 @@ def run_adam(model, lr, num_iters, validation, year, verbose=False):
             model.print_params()
         optim.step()
         optim.zero_grad()
+        time2 = time.time()
+        print("Time: ", time2-time1)
+        time1 = time2
 
-print("Loading Meteorlogical Data")
-df = met.load_daymet_data('../data/mont_st_hilaire/mont_st_hilaire_1980_1991.csv')
-low_time = 1
-high_time = 13
-sample_period = 4
-sample_start_time = 1
-temps = met.daymet_to_diurnal(df, 
-                            low_time, 
-                            high_time, 
-                            sample_period, 
-                            sample_start_time)
-temps = torch.tensor(temps)
+with torch.device('cuda'):
+    print("Loading Meteorlogical Data")
+    df = met.load_daymet_data('../data/mont_st_hilaire/mont_st_hilaire_1980_1991.csv')
+    low_time = 1
+    high_time = 13
+    sample_period = 4
+    sample_start_time = 1
+    temps = met.daymet_to_diurnal(df, 
+                                  low_time, 
+                                  high_time, 
+                                  sample_period, 
+                                  sample_start_time)
 
-config = Config(dtype=torch.float,
-                delta_t=sample_period/24)
+    config = Config(dtype=torch.float,
+                    delta_t=sample_period/24)
 
-days = torch.tensor(len(temps)//(24//sample_period))
-learning_rate = torch.tensor(0.00000001)
+    days = torch.tensor(len(temps)//(24//sample_period))
+    learning_rate = torch.tensor(0.00000001)
 
-
-print("Loading Validation Data")
-validation = pd.read_csv('../data/mont_st_hilaire/hilaire_88.csv')
-print(validation)
-validation['doy'] = validation['doy'].round()
-validation = np.interp(np.arange(0, 365), 
+    print("Loading Validation Data")
+    validation = pd.read_csv('../data/mont_st_hilaire/hilaire_88.csv')
+    print(validation)
+    validation['doy'] = validation['doy'].round()
+    validation = np.interp(np.arange(0, 365), 
                        validation['doy'],
                        validation['hatch'])
-validation = torch.tensor(validation)
+    validation = torch.tensor(validation)
 
-print("Running Adam")
-with torch.device('cuda'):
+    print("Running Adam")
     model = SimpleModel()
     run_adam(model, 1e-3, 100, validation, 1988, verbose=True)
