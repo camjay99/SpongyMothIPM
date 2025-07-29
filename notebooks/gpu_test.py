@@ -11,24 +11,6 @@ import SpongyMothIPM.util as util
 import SpongyMothIPM.kernels as kernels
 import SpongyMothIPM.visualization as viz
 
-df = met.load_daymet_data('../data/mont_st_hilaire/mont_st_hilaire_1980_1991.csv')
-low_time = 1
-high_time = 13
-sample_period = 4
-sample_start_time = 1
-temps = met.daymet_to_diurnal(df, 
-                            low_time, 
-                            high_time, 
-                            sample_period, 
-                            sample_start_time)
-temps = torch.tensor(temps)
-
-config = Config(dtype=torch.float,
-                delta_t=sample_period/24)
-
-days = torch.tensor(len(temps)//(24//sample_period))
-learning_rate = torch.tensor(0.00000001)
-
 # Model setup
 class SimpleModel():
     def __init__(self):
@@ -256,9 +238,33 @@ def run_adam(model, lr, num_iters, validation, year, verbose=False):
         model.init_pop()
         model.forward(300, 1988, 0, 1990, 365, False)
         model.compute_gradients(validation, year, verbose)
+        if verbose and (i % 10 == 0):
+            print("Iteration: ", i)
+            model.print_params()
         optim.step()
         optim.zero_grad()
 
+print("Loading Meteorlogical Data")
+df = met.load_daymet_data('../data/mont_st_hilaire/mont_st_hilaire_1980_1991.csv')
+low_time = 1
+high_time = 13
+sample_period = 4
+sample_start_time = 1
+temps = met.daymet_to_diurnal(df, 
+                            low_time, 
+                            high_time, 
+                            sample_period, 
+                            sample_start_time)
+temps = torch.tensor(temps)
+
+config = Config(dtype=torch.float,
+                delta_t=sample_period/24)
+
+days = torch.tensor(len(temps)//(24//sample_period))
+learning_rate = torch.tensor(0.00000001)
+
+
+print("Loading Validation Data")
 validation = pd.read_csv('../data/mont_st_hilaire/hilaire_88.csv')
 print(validation)
 validation['doy'] = validation['doy'].round()
@@ -267,6 +273,7 @@ validation = np.interp(np.arange(0, 365),
                        validation['hatch'])
 validation = torch.tensor(validation)
 
+print("Running Adam")
 with torch.device('cuda'):
     model = SimpleModel()
     run_adam(model, 1e-3, 100, validation, 1988, verbose=True)
