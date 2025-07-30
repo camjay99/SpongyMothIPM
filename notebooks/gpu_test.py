@@ -17,30 +17,30 @@ class SimpleModel():
     def __init__(self):
         # Build life stages
         self.prediapause = kernels.Prediapause(
-            config, save=False, save_rate=1, mortality=0, sigma=1.0516)
+            config, save=False, save_rate=1, mortality=0, sigma=0.0503)
         self.diapause = kernels.Diapause(
-            config, n_bins_I=50, n_bins_D=50, save=False, save_rate=1, mortality=0, sigma_I=1.5501, sigma_D=1.5500)
+            config, n_bins_I=50, n_bins_D=50, save=False, save_rate=1, mortality=0, sigma_I=0.4383, sigma_D=0.4382)
         self.postdiapause = kernels.Postdiapause(
-            config, save=False, save_rate=1, mortality=0, sigma=1.0543)
+            config, save=False, save_rate=1, mortality=0, sigma=0.0529)
         self.first_instar = kernels.FirstInstar(
             config, save=False, save_rate=1, mortality=0, 
-            file_path='../outputs/mont_st_hilaire/first_instar.csv', sigma=1.1458)
+            file_path='../outputs/mont_st_hilaire/first_instar.csv', sigma=0.1361)
         self.second_instar = kernels.SecondInstar(
-            config, save=False, save_rate=1, mortality=0, sigma=1.1483)
+            config, save=False, save_rate=1, mortality=0, sigma=0.1383)
         self.third_instar = kernels.ThirdInstar(
-            config, save=False, save_rate=1, mortality=0, sigma=1.0491)
+            config, save=False, save_rate=1, mortality=0, sigma=0.0479)
         self.fourth_instar = kernels.FourthInstar(
-            config, save=False, save_rate=1, mortality=0, sigma=1.0468)
+            config, save=False, save_rate=1, mortality=0, sigma=0.0457)
         self.male_late_instar = kernels.MaleFifthInstar(
-            config, save=False, save_rate=1, mortality=0, sigma=1.0449)
+            config, save=False, save_rate=1, mortality=0, sigma=0.0439)
         self.female_late_instar = kernels.FemaleFifthSixthInstar(
-            config, save=False, save_rate=1, mortality=0, sigma=1.1476)
+            config, save=False, save_rate=1, mortality=0, sigma=0.1377)
         self.male_pupae = kernels.MalePupae(
-            config, save=False, save_rate=1, mortality=0, sigma=1.0474)
+            config, save=False, save_rate=1, mortality=0, sigma=0.0463)
         self.female_pupae = kernels.FemalePupae(
-            config, save=False, save_rate=1, mortality=0, sigma=1.1211)
+            config, save=False, save_rate=1, mortality=0, sigma=0.1143)
         self.adults = kernels.Adult(
-            config, save=False, save_rate=1, mortality=0, sigma=1.1469)
+            config, save=False, save_rate=1, mortality=0, sigma=0.1371)
         
         # Gather parameters together for optimization.
         self.parameters = [self.prediapause.sigma,

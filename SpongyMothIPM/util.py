@@ -17,7 +17,7 @@ class LogNormalCDF(torch.autograd.Function):
                 + torch.erf(
                     (torch.log(input)
                     - torch.log(mu)) 
-                    / (torch.log(sigma)
+                    / (sigma
                     * math.sqrt(2.0))))),
             0)
         return result
@@ -29,22 +29,22 @@ class LogNormalCDF(torch.autograd.Function):
             x > 0,
             (1
             / (x
-                * torch.log(sigma)
+                * sigma
                 * (math.sqrt(2.0*math.pi)))
                 * torch.exp(
                     - ((torch.log(x)-torch.log(mu))**2)
-                    / (2*torch.log(sigma)**2))),
+                    / (2*(sigma**2)))),
             0)
         grad_x = grad_output * dx
         grad_mu = None
         grad_sigma = torch.where(
             (x > 0) & (mu > 0),
-            (math.sqrt(2*math.pi)
+            (1 / math.sqrt(2*math.pi)
              * torch.exp(
                  - (((torch.log(x) - torch.log(mu))
-                    / (math.sqrt(2)*torch.log(sigma)))**2))
+                    / (math.sqrt(2)*sigma))**2))
              * ((torch.log(mu) - torch.log(x))
-                / (torch.log(sigma)**2 * sigma))),
+                / (sigma**2))),
             0)
         grad_sigma = grad_sigma * dx
         if torch.any(torch.isinf(grad_sigma)) or torch.any(torch.isnan(grad_sigma)):
