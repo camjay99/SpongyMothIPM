@@ -376,7 +376,9 @@ class Diapause(_LifeStage):
     def write(self):
         # Aggregate outputs into single array and turn convert into
         # Pandas DataFrame which has nicer writing utilities.
-        arr = np.concatenate(self.hist_pops, axis=0)
+        hist_pops = [pop.numpy().reshape(1, -1) 
+                         for pop in self.hist_pops]
+        arr = np.concatenate(hist_pops, axis=0)
         labels = [f'{x:.{self.precision}e}_{y:.{self.precision}e}' 
                   for x in self.Is for y in self.Ds]
         index = pd.MultiIndex.from_arrays([self.years, self.ydays],
