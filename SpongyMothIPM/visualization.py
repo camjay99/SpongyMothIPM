@@ -1,8 +1,11 @@
+from math import ceil
+
 import matplotlib.pyplot as plt
+import pandas as pd
 import torch
 
-from SpongyMothIPM.config import Config
-import SpongyMothIPM.kernels as kernels
+#from SpongyMothIPM.config import Config
+#import SpongyMothIPM.kernels as kernels
 
 def tensor2d_imshow(tensor, n_bins, xmin, xmax):
     """Takes a 2d tensor and displays it as a heatmap."""
@@ -39,14 +42,14 @@ def tensor4d_to_2d_imshow(tensor, n_bins, sample_dims, sample_rates, dim_names, 
         for j in range(n_cols):
             # Isolate slice
             slice = torch.index_select(tensor, 
-                                       dim=sample_dims[0], 
-                                       index=torch.tensor(j*sample_rates[0]))
+                                       dim=sample_dims[1], 
+                                       index=torch.tensor(j*sample_rates[1]))
             slice = torch.index_select(slice,
-                                       dim=sample_dims[1],
-                                       index=torch.tensor(i*sample_rates[1]))
+                                       dim=sample_dims[0],
+                                       index=torch.tensor(i*sample_rates[0]))
             slice = slice.reshape((n_bins, n_bins))
             axes[i, j].imshow(slice, cmap='Reds')
-            axes[i, j].scatter(i*sample_rates[1], j*sample_rates[0], color='black', s=5)
+            axes[i, j].scatter(j*sample_rates[1], i*sample_rates[0], color='black', s=5)
             # axes[i, j].set_xticks([])
             # axes[i, j].set_yticks([])
             axes[i, j].set_ylim([n_bins-0.5, -0.5])
@@ -71,8 +74,98 @@ def project_plot(kernel, pop, xs, num_gens):
     ax.legend()
     plt.show()
 
+def plot_eigenvector(tensor, n_bins):
+    test = torch.ones(tensor.shape[0])
+    fig, ax = plt.subplots()
+    for i in range(100):
+        test = tensor @ test
+        if i % 10 == 0:
+            D_test = test.reshape((n_bins, n_bins)).sum(dim=1)
+            ax.plot(D_test)
+    plt.show()
+
+def compute_abundances(df):
+    return df.sum(axis=1)
+    
+def plot_abundances(ax, 
+                    dfs, 
+                    names, 
+                    styles,
+                    validation=None, 
+                    normalize=False,
+                    legend=False,
+                    tick_start=0,
+                    tick_freq=10,
+                    zero_based=True,
+                    tick_fontsize=20,
+                    label_fontsize=20):
+    # Plot abundances
+    for i, df in enumerate(dfs):
+        abundances = compute_abundances(df)
+        if normalize:
+            abundances = abundances / abundances.max()
+        ax.plot(abundances.to_numpy(), 
+                label=names[i],
+                **(styles[i]))
+        
+    # Set tick labels
+    ax.set_xticks(range(tick_start, len(abundances), tick_freq), 
+                  abundances.index.get_level_values('yday')[tick_start::tick_freq]-int(zero_based))
+    ax.tick_params(labelsize=tick_fontsize)
+    ax.xaxis.grid(True, which='major', color='lightgray')
+
+    # Set axis labels
+    ax.set_xlabel("Day of Year", fontsize=label_fontsize)
+    ax.set_ylabel("Population Density", fontsize=label_fontsize)
+
+    # Plot validation points
+    if validation is not None:
+        ax.plot(validation['doy'], 
+                validation['hatch'], 
+                label='validation')
+    if legend:
+        ax.legend()
+
+def _plot_age_dists_1D(ax, df, times):
+    for time in times:
+        ax.plot(df.iloc[time], label=time)
+    ax.legend()
+
+def _plot_age_dists_2D(ax, df, times, n_bins):
+    for time in times:
+        row = df.iloc[time].to_numpy().reshape((n_bins, n_bins))
+        row = row.sum(axis=0)
+        ax.plot(row, label=time)
+    ax.legend()
+
+def plot_age_dists(dfs, twoD=None, bins=None, start=0, end=-1, step=1):
+    if twoD is None:
+        twoD = [False]*len(dfs)
+    if end == -1:
+        end = len(dfs[0])
+    times = list(range(start, end, step))
+    ncols = min(3, len(dfs))
+    nrows = ceil(len(dfs)/ncols)
+    fig, axes = plt.subplots(ncols=ncols, nrows=nrows, squeeze=False)
+
+    for i in range(nrows):
+        for j in range(ncols):
+            if i*ncols + j < len(dfs):
+                if twoD[i*ncols + j]:
+                    _plot_age_dists_2D(axes[i, j], 
+                                       dfs[i*ncols + j], 
+                                       times,
+                                       bins[i*ncols + j])
+                else:
+                    _plot_age_dists_1D(axes[i, j],
+                                       df[i*ncols + j],
+                                       times)
+    plt.show()
+
+
+
 if __name__ == '__main__':
-    config = Config()
+    #config = Config()
 
 
     # pop0_I = SpongyMothIPM.LnormPDF(SpongyMothIPM.from_x, torch.tensor(0.2), torch.tensor(1.1))
@@ -93,18 +186,67 @@ if __name__ == '__main__':
     #              10)
 
     # stage = kernels.Diapause(config)
-    # kernel = stage.build_kernel([10.0], twoD=False).detach()
+    # kernel = stage.build_kernel([30.0], twoD=False).detach()
     # tensor4d_to_2d_imshow(
     #     kernel,
     #     100,
-    #     (2, 3),
+    #     (0, 1),
     #     (20, 20),
     #     ("I", "D"),
     #     one_to_one=True)
     
-    stage = kernels.Prediapause(config)
-    kernel = stage.build_kernel([15.0]).detach()
-    tensor2d_imshow(kernel, 
-                    config.n_bins,
-                    config.min_x,
-                    config.max_x)
+    # stage = kernels.Diapause(config)
+    # kernel1 = stage.build_kernel([0.0]).detach()
+    
+    # tensor2d_imshow(kernel1, 
+    #                 config.n_bins*config.n_bins,
+    #                 config.min_x,
+    #                 config.max_x)
+
+    # stage = kernels.Diapause(config)
+    # kernel = stage.build_kernel([30.0]).detach()
+
+    # plot_eigenvectors(kernel, config.n_bins)
+
+    # Load data
+    df_pre = pd.read_csv('./outputs/mont_st_hilaire/prediapause.csv', header=0, index_col=[0,1])
+    df_dia = pd.read_csv('./outputs/mont_st_hilaire/diapause.csv', header=0, index_col=[0,1])
+    df_post = pd.read_csv('./outputs/mont_st_hilaire/postdiapause.csv', header=0, index_col=[0,1])
+    df_L1 = pd.read_csv('./outputs/mont_st_hilaire/first_instar.csv', header=0, index_col=[0,1])
+    df_L2 = pd.read_csv('./outputs/mont_st_hilaire/second_instar.csv', header=0, index_col=[0,1])
+    df_L3 = pd.read_csv('./outputs/mont_st_hilaire/third_instar.csv', header=0, index_col=[0,1])
+    df_L4 = pd.read_csv('./outputs/mont_st_hilaire/fourth_instar.csv', header=0, index_col=[0,1])
+    df_LLM = pd.read_csv('./outputs/mont_st_hilaire/male_late_instar.csv', header=0, index_col=[0,1])
+    df_LLF = pd.read_csv('./outputs/mont_st_hilaire/female_late_instar.csv', header=0, index_col=[0,1])
+    df_PM = pd.read_csv('./outputs/mont_st_hilaire/male_pupae.csv', header=0, index_col=[0,1])
+    df_PF = pd.read_csv('./outputs/mont_st_hilaire/female_pupae.csv', header=0, index_col=[0,1])
+    df_adults = pd.read_csv('./outputs/mont_st_hilaire/adult.csv', header=0, index_col=[0,1])
+
+    def get_year(df, year):
+        return df[df.index.get_level_values('year') == year]
+    year = 1988 
+    # Grab one year f data
+    df_pre_year = get_year(df_pre, year)
+    df_dia_year = get_year(df_dia, year)
+    df_post_year = get_year(df_post, year)
+    df_L1_year = get_year(df_L1, year)
+    df_L2_year = get_year(df_L2, year)
+    df_L3_year = get_year(df_L3, year)
+    df_L4_year = get_year(df_L4, year)
+    df_LLM_year = get_year(df_LLM, year)
+    df_LLF_year = get_year(df_LLF, year)
+    df_PM_year = get_year(df_PM, year)
+    df_PF_year = get_year(df_PF, year)
+    df_adults_year = get_year(df_adults, year)
+    dfs = [df_pre_year, df_dia_year, df_post_year,
+           df_L1_year, df_L2_year, df_L3_year, df_L4_year,
+           df_LLM_year, df_LLF_year, df_PM_year, df_PF_year,
+           df_adults_year]
+    names = ['Prediapuse', 'Diapause', 'Postdiapause', 'L1', 'L2', 'L3', 'L4', 'LLM', 'LLF', 'PM', 'PF', 'Adult']
+
+    # Plot
+    valid = pd.read_csv('./data/mont_st_hilaire/hilaire_90.csv')
+
+    fig, ax = plt.subplots()
+    plot_abundances(ax, dfs, names, [{}]*len(names), valid, legend=True)
+    plt.show()

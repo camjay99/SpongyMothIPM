@@ -2,19 +2,79 @@ import math
 
 import torch
 
-def LnormPDF(x, mu, sigma):
-    """Compute the log-normal pdf based on x and a list of mulog/sigmalog."""
-    # When x = 0, lognormal pdf will return nan when it should be 0.
-    # Therefore, we slightly nudge values first (this helps ensure
-    # differentiability, which zeroing the first entry would not do).
-    # When mu = 0, set 1 along the diagonal and rest of value in column
-    # to 0.
-    x = x + 0.000000001
-    dist = (1
+# Automatic differentiaion of the log normal cdf is not numerically stable.
+# Here we provide our own backward step that simplifies computations
+# to ensure the gradient can be computed.
+class LogNormalCDF(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, input, mu, sigma):
+        """Compute the log-normal cdf based on x and a tensor of mu/sigma"""
+        ctx.save_for_backward(input, mu, sigma)
+        result = torch.where(
+            input > 0,
+            (0.5
+            * (1
+                + torch.erf(
+                    (torch.log(input)
+                    - torch.log(mu)) 
+                    / (sigma
+                    * math.sqrt(2.0))))),
+            0)
+        return result
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        x, mu, sigma = ctx.saved_tensors
+        dx = torch.where(
+            x > 0,
+            (1
             / (x
+                * sigma
+                * (math.sqrt(2.0*math.pi)))
+                * torch.exp(
+                    - ((torch.log(x)-torch.log(mu))**2)
+                    / (2*(sigma**2)))),
+            0)
+        grad_x = grad_output * dx
+        grad_mu = torch.where(
+            (x > 0) & (mu > 0),
+            (1 / (mu*sigma*math.sqrt(2*math.pi))
+             * torch.exp(
+                 - (((torch.log(x) - torch.log(mu))
+                    / (math.sqrt(2)*sigma))**2))),
+            0)
+        grad_mu = grad_mu * grad_output
+        grad_sigma = torch.where(
+            (x > 0) & (mu > 0),
+            (1 / math.sqrt(2*math.pi)
+             * torch.exp(
+                 - (((torch.log(x) - torch.log(mu))
+                    / (math.sqrt(2)*sigma))**2))
+             * ((torch.log(mu) - torch.log(x))
+                / (sigma**2))),
+            0)
+        grad_sigma = grad_sigma * grad_output
+        if torch.any(torch.isinf(grad_sigma)) or torch.any(torch.isnan(grad_sigma)):
+            print(grad_sigma)
+            print(x)
+            print(mu)
+            print(sigma)
+            raise Exception()
+        return grad_x, grad_mu, grad_sigma
+
+def LnormCDF(x, mu, sigma):
+    result = LogNormalCDF.apply(x, mu, sigma)
+    return result
+
+def LnormPDF(x, mu, sigma):
+    result = torch.where(
+        x > 0,
+        (1
+        / (x
             * torch.log(sigma)
             * (math.sqrt(2.0*math.pi)))
             * torch.exp(
+<<<<<<< HEAD
                 -((torch.log(x)-torch.log(mu))**2)
                 / (2*torch.log(sigma)**2)))
     return dist
@@ -22,7 +82,20 @@ def LnormPDF(x, mu, sigma):
 
 def validate(tensor):
     return torch.where(tensor.sum(dim=0, keepdim=True) == torch.tensor(0), torch.eye(tensor.shape[0]), tensor)
+=======
+                - ((torch.log(x)-torch.log(mu))**2)
+                / (2*torch.log(sigma)**2))),
+        0)
+    return result
+>>>>>>> 478e6373619f89a76e23b9811f7cc81cee927b37
 
+
+def validate(tensor, mu):
+    return torch.where(
+        torch.isclose(mu, 
+                      torch.tensor(0.0)),
+        torch.eye(tensor.shape[0]),
+        tensor)
 
 def Logan_TM1(temp, psi, rho, t_max, crit_temp_width, tbase=0):
     tau = (t_max - temp + tbase) / crit_temp_width

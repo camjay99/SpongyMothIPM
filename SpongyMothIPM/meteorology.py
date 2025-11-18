@@ -15,7 +15,7 @@ def load_daymet_data(file_path):
     df = pd.read_csv(file_path, header=6)
     return df
 
-def daymet_to_diurnal(df, low_time, high_time, sample_period, sample_start_time):
+def daymet_to_diurnal(df, low_time, high_time, sample_period, sample_start_time, num_days=None):
     """Take daymet point record and computes diurnal cycle at the specified
        sampling frequency. Assumptions of when the low and high temperatures
        occurred are required. Algorithm will repeat first/last day as 
@@ -25,6 +25,14 @@ def daymet_to_diurnal(df, low_time, high_time, sample_period, sample_start_time)
     daily_obs = 24 // sample_period
     min_temps = df['tmin (deg c)'].to_numpy()
     max_temps = df['tmax (deg c)'].to_numpy()
+    years = df['year'].to_numpy()
+    ydays = df['yday'].to_numpy()
+
+    if num_days is not None:
+        min_temps = min_temps[:num_days]
+        max_temps = max_temps[:num_days]
+        years = years[:num_days]
+        ydays = ydays[:num_days]
    
     # Based on which time occurs first, alter
     # computations to ensure we have estimates
@@ -111,15 +119,14 @@ def daymet_to_diurnal(df, low_time, high_time, sample_period, sample_start_time)
                     * np.cos(np.pi/((start-end)%24) * ((time-end)%24))
                     + betas_p2[1:-1]
             )
-    return temps
-
-def calc_GDD(temps, sample_period, day):
-    start = day*(24%sample_period)
-    GDD = 0
-    for i in range(24%sample_period):
-        GDD += temps[start+i]*sample_period/24
-    return GDD
-
+    # Reattach year/day/hour information.
+    time_stamps = [(year, yday, hour) 
+                    for year, yday in zip(years, ydays)
+                    for hour in range(sample_start_time, 25, sample_period)]
+    timed_temps = pd.DataFrame.from_records(data=time_stamps, 
+                                            columns=['year', 'yday', 'hour'])
+    timed_temps['temp'] = temps
+    return timed_temps
 
 if __name__ == '__main__':
     df = load_daymet_data('./data/11752_lat_41.7074_lon_-77.0846_2025-06-11_123955.csv')
@@ -135,7 +142,7 @@ if __name__ == '__main__':
     print(temps[40:120])
     fig, ax = plt.subplots()
     xs = [sample_start_time + (sample_period)*x for x in range(len(temps))]
-    ax.plot(xs, temps, color='black')
+    ax.plot(xs, temps['temp'], color='black')
     ax.scatter(list(range(low_time, 24*len(df)+low_time, 24)), df['tmin (deg c)'], color='blue')
     ax.scatter(list(range(high_time, 24*len(df)+high_time, 24)), df['tmax (deg c)'], color='red')
     ax.set_xlim(2000, 2220)

@@ -1,7 +1,8 @@
 starvation.ipynb
 .ipynb_checkpoints
 starvation.txt
-data
 trial.py
 __pycache__
 development.ipynb
+inhibitor.ipynb
+outputs
