@@ -1,3 +1,27 @@
+"""Classes for generating kernels for various life stages based on temperature.
+
+This module contains all of the functionality required for generating projection
+kernels and maintaining an associated population. The _LifeStage helper class 
+implements basic functionality common to all kernel generators such as 
+initialization, saving, and moving individuals between populations; while other
+classes implement specific kernel generating functions for those life stages. 
+
+Classes that can be imported from this module:
+- Prediapause
+- Diapause
+- Postdiapause
+- FirstInstar
+- SecondInstar
+- ThirdInstar
+- FourthInstar
+- FemaleFifthSixthInstar
+- MaleFifthInstar
+- FemalePupae
+- MalePupae
+- Adult
+"""
+
+
 import os
 
 import numpy as np
@@ -14,70 +38,172 @@ class _LifeStage():
                  save_rate=5, 
                  write_rate=10, 
                  precision=4):
+        """Initializes the instance based on saving preferences.
+
+        Args:
+          config:  A Config instance describing global settings.
+          save:  A boolean indicating whether to save population information.
+          file_path: A string indicating where population info will be saved,
+            generally into a .csv file. Passing "memory" will save into an
+            in-memory list that can be accessed through the `saved_pops` field.
+          save_rate:  Number of iterations before saving population information.
+          write_rate:  Number of saves befores writing buffer out to disk.
+          precision:  Number of digits after decimal point to use while saving
+            floating points.
+        """
+
         # Config provides global settings and utilities
         self.config = config
         # Parameters for saving results
-        self.save = save
-        self.file_path = file_path
-        if self.file_path == 'memory':
-            self.saved_pops = []
-        self.years = []
-        self.ydays = []
-        self.hist_pops = []
+        self.save = save 
+        self.file_path = file_path 
         self.save_rate = save_rate
         self.write_rate = write_rate
         self.precision = precision
+        # Initialize buffers for saved information
+        if self.file_path == 'memory':
+            self.saved_pops = []
+        self.years = [] 
+        self.ydays = []
+        self.hist_pops = []
         # Counters for when to save and write
         self.num_iters = 0
         self.num_saves = 0
     
     def init_kernel_helpers(self, n_bins, min_x, max_x):
+        """Initializes helper data needed for computing kernels.
+
+        Args:
+          n_bins:  An integer representing the number of bins to separate 
+            developmental stages into.
+          min_x:  A float representing the minimum developmental age to track. 
+            The first bin will be centered on this value.
+          max_x:  A float representing the maximum developmental age to track. 
+            The last bin will be centered on this value.
+        """
+
+        # Save settings for kernel
         self.n_bins = n_bins
         self.min_x = min_x
         self.max_x = max_x
+        # Create helper tensors for computing kernels
         self.shape = (self.n_bins, self.n_bins)
+        ## Variables values of bin centers
         self.xs = torch.linspace(self.min_x, self.max_x, self.n_bins)
+        ## Reshape bin center tensors for broadcasting
+        self.from_x = torch.reshape(self.xs, (1, self.n_bins))
+        self.to_x = torch.reshape(self.xs, (self.n_bins, 1))
+        ## Create tensors representing growth increments
+        ## These are used to calculate probabilities of moving between bins
+        self.x_dif = torch.maximum(torch.tensor(0), self.to_x - self.from_x)
+        ## Create tensors for adding/removing individuals from this life stage.
         self.xs_for_transfer = self.xs >= 1
         self.input_xs = torch.zeros_like(self.xs)
         self.input_xs[0] = 1
-        self.from_x = torch.reshape(self.xs, (1, self.n_bins))
-        self.to_x = torch.reshape(self.xs, (self.n_bins, 1))
-        self.x_dif = torch.maximum(torch.tensor(0), self.to_x - self.from_x)
 
-    def init_pop(self, total, position, scale):
+    def init_pop(self, total, location, scale):
+        """Initializes a sample population using a lognormal distribution.
+
+        Initializes a tensor attribute `pop` representing the sample population 
+        using a lognormal distribution. This tensor will have size matching the
+        attribute `xs`, so init_kernel_helpers must be called prior to calling
+        this method.
+
+        Args:
+          total:  A float indicating the total population density.
+          location: A float representing the location of the lognormal 
+            distribution used to initialize the population.
+          scale: A float representing the scale of the lognormal distribution
+            used to initialize the population.
+        """
+
         self.pop = util.LnormPDF(self.xs, 
-                                 torch.tensor(position), 
+                                 torch.tensor(location), 
                                  torch.tensor(scale))
         self.pop = self.pop*total/self.pop.sum()
         
-    def grow_pop(self, temps):
+    def project_pop(self, temps):
+        """Projects the population forward one day.
+        
+        Args:
+          temps: A list of floats representing sub-daily temperatures. The 
+            length of the list should match the number of sub-daily time 
+            periods (Currently not enforced).
+        """
         kernel = self.build_kernel(temps)
         self.pop = kernel @ self.pop
 
     def apply_mortality(self):
+        """Decreases population total density based on mortality.
+        
+        Decreases population total density by (1-mortality). Mortality is 
+        applied in a development age-independent fashion.
+        """
+
         self.pop = self.pop*(1 - self.mortality)
 
     def get_transfers(self):
+        """Removes population density that has developed out of this stage.
+        
+        Returns:
+          A float representing the total density of population that has 
+          developed out of this stage.
+        """
+
         transfers = torch.sum(self.pop*self.xs_for_transfer)
         self.pop = self.pop*~self.xs_for_transfer
         return transfers
         
     def add_transfers(self, transfers=0):
+        """Adds population density to initial development bin.
+        
+        Args:
+          transfers: A float representing the density of individuals to be added
+            to this stage.
+        """
+
         self.pop = self.pop + transfers*self.input_xs
 
     def run_one_step(self, met, incoming=0):
+        """Completes one daily time step of the model.
+        
+        Completes an entire daily time step. This follows the following order:
+        1) Get temperatures,
+        2) Apply mortality,
+        3) Build kernel and project population,
+        4) Remove outgoing population density,
+        5) Add incoming population density,
+        6) Save population status.
+        
+        Args:
+          met:  A Pandas Dataframe representing temperatures and time stamps.
+          incoming:  A float representing the incoming population density from 
+            the previous stage.
+
+        Returns:
+          A float representing the outgoing population density from this stage.
+        """
+
         temps = self._validate_temps(met)
+        self.apply_mortality()
+        self.project_pop(temps)
+        outgoing = self.get_transfers()
+        self.add_transfers(incoming)
         if self.save:
             year = met['year'].iloc[0]
             yday = met['yday'].iloc[0]
             self.save_pop(year, yday)
-        self.apply_mortality()
-        self.grow_pop(temps)
-        outgoing = self.get_transfers()
-        self.add_transfers(incoming)
         return outgoing
     
     def write(self):
+        """Writes population information.
+
+        Writes population information to disk (or memory if `file_path` is set 
+        to 'memory'). Precision of values written disk are determined by the
+        `precision` attribute.
+        """
+
+        # Saves output to disk.
         if self.file_path == 'memory':
             self.saved_pops.extend(self.hist_pops)
         else:
@@ -97,6 +223,19 @@ class _LifeStage():
                     float_format=f'{{:.{self.precision}f}}'.format)
 
     def save_pop(self, year, yday):
+        """Saves population information for writing.
+
+        Saves population information for writing every `save_rate` calls. After
+        `write_rate` saves, information in the buffer is written to disk and the
+        buffer is flushed.
+
+        Args:
+          year:  An integer representing the current year of the model.
+          yday: An integer representing the current day of year of the model.
+        """
+
+        # Records current population status. If the save buffer
+        # has been filled, then initiates a write to disk.
         if (self.num_iters % self.save_rate) == 0:
             self.hist_pops.append(self.pop.detach())
             self.years.append(year)
@@ -110,6 +249,16 @@ class _LifeStage():
         self.num_iters += 1
 
     def _validate_temps(self, met):
+        """Validates that a proper Dataframe of temperatures has been passed.
+        
+        Args:
+          met:  A Pandas Dataframe representing temperatures and associated
+            time stamps for the current model step.
+
+        Returns:
+          A list of floats representing sub-daily temperatures.
+        """
+
         if type(met) is pd.DataFrame:
             # Check that all day nums are the same
             days = met['yday'].to_numpy()
@@ -123,6 +272,21 @@ class _LifeStage():
         return temps
     
     def build_kernel(self, temps):
+        """Computes a projection kernel for a one-day time step.
+        
+        Computes a daily projection kernel based on provided temps. Average
+        development for a day is assumed to be the sum of development rates over
+        sub-daily time steps. Note, this method requires a `calc_mu` method,
+        which must be defined by inheriting classes.
+
+        Args:
+          temps:  A list of floats representing sub-daily temperatures.
+
+        Returns:
+          A PyTorch Tensor representing a projection kernel for a one-day
+          time step.
+        """
+
         mu = torch.tensor(0, dtype=self.config.dtype)
         for temp in temps:
             mu = mu + self.calc_mu(temp)
@@ -149,7 +313,18 @@ class Prediapause(_LifeStage):
                  precision=4, 
                  sigma=1.1, 
                  mortality=0.1):
-        super().__init__(config, save, file_path, save_rate, write_rate, precision)
+        """Initializes a Prediapause life stage.
+        
+        Args:
+          config, n_bins, min_x, max_x, save, file_path, save_rate, 
+            write_rate, precision:  See _LifeStage.__init__ for details.
+          sigma:  A float representing the initial shape to be used when
+            generating developmental variability in kernels.
+          mortality:  The default mortality rate to be applied each time step.
+        """
+
+        super().__init__(config, save, file_path, save_rate, 
+                         write_rate, precision)
         self.init_kernel_helpers(n_bins, min_x, max_x)
 
         ## Assumed Parameters
@@ -167,6 +342,15 @@ class Prediapause(_LifeStage):
                                       requires_grad=True)
 
     def calc_mu(self, temp):
+        """Calculates mean development under in the specified temperature.
+        
+        Args:
+          temp: A float representing the current temperature.
+
+        Returns:
+          A 0-dim tensor representing the mean development under one sub-daily
+          time step at the specified temperature.
+        """
         mu = (
             self.config.delta_t
             * util.Logan_TM1(temp, 
@@ -175,29 +359,55 @@ class Prediapause(_LifeStage):
                              self.t_max, 
                              self.crit_temp_width))
         return mu
-
-
     
 
 class Diapause(_LifeStage):
     def __init__(self, 
                  config, 
-                 n_bins_I=100, 
-                 min_I=0,
-                 max_I=1.1880,
-                 n_bins_D=100, 
-                 min_D=0,
-                 max_D=1,
                  save=False,
                  file_path='',
                  save_rate=5, 
                  write_rate=10, 
                  precision=4, 
+                 n_bins_I=100, 
+                 min_I=0,
+                 max_I=1.1880,
                  sigma_I=1.5, 
+                 n_bins_D=100, 
+                 min_D=0,
+                 max_D=1,
                  sigma_D=1.5, 
                  mortality=0.1):
-        super().__init__(config, save, file_path, save_rate, write_rate, precision)
+        """Initializes a Diapause life stage.
+        
+        Args:
+          config, save, file_path, save_rate, write_rate, precision:  
+            See _LifeStage.__init__ for details.
+          n_bins_I:  An integer representing the number of bins to use for the
+            inhibitor concentration.
+          min_I:  A float representing the smallest amount of inhibitor depleted
+            tracked. The first bin will be centered on this value. Inhibitor 
+            concentration is tracked as the concentration depleted to facilitate
+              computations.
+          max_I:  A float representing the largest amount of inhibitor depleted 
+            tracked. The last bin will be centered on this value. Inhibitor 
+            concentration is tracked as the concentration depleted to facilitate 
+            computations.
+          sigma_I:  A float representing the initial shape to be used when
+            generating inhibitor depletion variability in kernels.
+          n_bins_D:  An integer representing the number of bins to use for the
+            developmental age.
+          min_D:  A float representing the smallest developmental age tracked. 
+            The first bin will be centered on this value.
+          max_D:  A float representing the largest developmental age tracked. 
+            The last bin will be centered on this value.
+          sigma_D:  A float representing the initial shape to be used when
+            generating developmental variability in kernels.
+          mortality:  The default mortality rate to be applied each time step.
+        """
 
+        super().__init__(config, save, file_path, save_rate, 
+                         write_rate, precision)
         self.init_kernel_helpers(n_bins_I, min_I, max_I, n_bins_D, min_D, max_D)
 
         ## Assumed Parameters
@@ -237,27 +447,68 @@ class Diapause(_LifeStage):
                             n_bins_D, 
                             min_D, 
                             max_D):
+        """Initializes helper data needed for computing kernels.
+
+        Args:
+          n_bins_I:  An integer representing the number of bins to use for the
+            inhibitor concentration.
+          min_I:  A float representing the smallest amount of inhibitor depleted
+            tracked. The first bin will be centered on this value. Inhibitor 
+            concentration is tracked as the concentration depleted to facilitate
+              computations.
+          max_I:  A float representing the largest amount of inhibitor depleted 
+            tracked. The last bin will be centered on this value. Inhibitor 
+            concentration is tracked as the concentration depleted to facilitate 
+            computations.
+          n_bins_D:  An integer representing the number of bins to use for the
+            developmental age.
+          min_D:  A float representing the smallest developmental age tracked. 
+            The first bin will be centered on this value.
+          max_D:  A float representing the largest developmental age tracked. 
+            The last bin will be centered on this value.
+        """
+                
+        # Save settings for kernel
         self.n_bins_I = n_bins_I
         self.min_I = min_I
         self.max_I = max_I
         self.n_bins_D = n_bins_D
         self.min_D = min_D
         self.max_D = max_D
+
+        # Create helper tensors for computing kernels
         self.shape = (n_bins_I, n_bins_D)
+        ## Variables values of bin centers
         self.Is = torch.linspace(min_I, max_I, n_bins_I)
-        self.Ds = torch.linspace(min_D, max_D, n_bins_D)
-        self.from_I = torch.reshape(self.Is, (n_bins_I, 1, 1, 1))
+        self.Ds = torch.linspace(min_D, max_D, n_bins_D) 
+        ## Reshape bin center tensors for broadcasting
+        self.from_I = torch.reshape(self.Is, (n_bins_I, 1, 1, 1)) 
         self.to_I = torch.reshape(self.Is, (1, 1, n_bins_I, 1))
         self.from_D = torch.reshape(self.Ds, (1, n_bins_D, 1, 1))
         self.to_D = torch.reshape(self.Ds, (1, 1, 1, n_bins_D))
+        ## Create tensors representing growth increments
+        ## These are used to calculate probabilities of moving between bins
         self.I_dif = torch.maximum(torch.tensor(0), self.to_I - self.from_I)
         self.D_dif = torch.maximum(torch.tensor(0), self.to_D - self.from_D)
+        ## Create tensors for adding/removing individuals from this life stage.
         self.grid2d = torch.squeeze(torch.ones_like(self.from_I)*self.from_D)
         self.grid2d_for_transfer = self.grid2d >= 1
         self.input_grid2d = torch.zeros_like(self.grid2d)
         self.input_grid2d[0, 0] = 1
 
     def calc_mu_I(self, temp):
+        """Calculates mean inhibitor depletion in the specified temperature.
+        
+        Args:
+          temp: A float representing the current temperature.
+
+        Returns:
+          A tensor representing the mean inhibitor depletion under one 
+          sub-daily time step at the specified temperature. This tensor has 
+          shape (num_I, num_D, 1, 1). Mean values vary across the first 
+          dimension but are constant across the second dimension.
+        """
+
         Z = (self.t_max - temp) / (self.t_max - self.t_min)
         rp = 1 + self.rp_c*(torch.exp(Z)**6)
         rs = self.rs_c + self.rs_rp*rp
@@ -277,6 +528,18 @@ class Diapause(_LifeStage):
         return mu_I
     
     def calc_mu_D(self, temp):
+        """Calculates mean development in the specified temperature.
+        
+        Args:
+          temp: A float representing the current temperature.
+
+        Returns:
+          A tensor representing the mean development under one sub-daily time 
+          step at the specified temperature. This tensor has shape 
+          (num_I, num_D, 1, 1). Mean values vary across both of these 
+          dimensions.
+        """
+
         Z = (self.t_max - temp) / (self.t_max - self.t_min)
         if temp <= self.t_min:
             A = self.A_min
@@ -296,6 +559,24 @@ class Diapause(_LifeStage):
         return mu_D
 
     def build_kernel(self, temps, twoD=True):
+        """Computes a projection kernel for a one-day time step.
+        
+        Computes a daily projection kernel based on provided temps. Average
+        development for a day is assumed to be the sum of development rates over
+        sub-daily time steps. Note, this method requires a `calc_mu` method,
+        which must be defined by inheriting classes.
+
+        Args:
+          temps:  A list of floats representing sub-daily temperatures.
+          twoD:  A boolean representing whether the kernel should be reshaped
+            into two dimensions.
+
+        Returns:
+          A PyTorch Tensor of shape (num_I, num_D, num_I, num_D) (or
+          (num_I*num_D, num_I*numD) if `twoD` is specified) representing a 
+          projection kernel for a one-day time step.
+        """
+
         # Current strategy is to compute as a 4-D tensor to take advantage of broadcasting, then to 
         # reshape into a 2D matrix to take advantage of matrix multiplication.
         # To simplify calculations, we keep track of 1-I rather than I, so that
@@ -348,20 +629,50 @@ class Diapause(_LifeStage):
         else:
             return kernel_4D
     
-    def init_pop(self, total, position_I, scale_I, position_D=None, scale_D=None):
-        if (position_D == None) and (scale_D == None):
-            position_D = position_I
+    def init_pop(self, total, location_I, scale_I, 
+                 location_D=None, scale_D=None):
+        """Initializes a sample population using a lognormal distribution.
+
+        Initializes a tensor attribute `pop` representing the sample population 
+        using a lognormal distribution. This tensor will have size matching the
+        attribute `xs`, so init_kernel_helpers must be called prior to calling
+        this method.
+
+        Args:
+          total:  A float indicating the total population density.
+          location_I: A float representing the location of the lognormal 
+            distribution used to initialize the inhibitor concentrations
+            of the population.
+          scale_I: A float representing the scale of the lognormal distribution
+            used to initialize the inhibitor concentrations of the population.
+          location_D: A float representing the location of the lognormal 
+            distribution used to initialize the developmental age of the 
+            population. If None, uses the same value as `location_I`.
+          scale_D: A float representing the scale of the lognormal distribution
+            used to initialize the developmental age of the population. If none,
+            uses the same value as `scale_I`
+        """
+        if (location_D == None) and (scale_D == None):
+            location_D = location_I
             scale_D = scale_I
         pop_I = util.LnormPDF(self.from_I, 
-                              torch.tensor(position_I), 
+                              torch.tensor(location_I), 
                               torch.tensor(scale_I))
         pop_D = util.LnormPDF(self.from_D, 
-                              torch.tensor(position_D), 
+                              torch.tensor(location_D), 
                               torch.tensor(scale_D))
         self.pop = torch.flatten(pop_I * pop_D)
         self.pop = self.pop*total/self.pop.sum()
 
     def get_transfers(self):
+        """Removes population density that has developed out of this stage. 
+        
+        Returns:
+          A float representing the total density of population that has 
+          developed out of this stage. This is solely determined by 
+          developmental age, and not by inhibitor concetration.
+        """
+
         pop_2D = torch.reshape(self.pop, self.shape)
         transfers = torch.sum(pop_2D*self.grid2d_for_transfer)
         pop_2D = pop_2D*~self.grid2d_for_transfer
@@ -369,11 +680,25 @@ class Diapause(_LifeStage):
         return transfers
 
     def add_transfers(self, transfers=0):
+        """Adds population density to initial development bin.
+        
+        Args:
+          transfers: A float representing the density of individuals to be added
+            to this stage.
+        """
+                
         pop_2D = torch.reshape(self.pop, self.shape)
         pop_2D = pop_2D + transfers*self.input_grid2d
         self.pop = torch.flatten(pop_2D)
 
     def write(self):
+        """Writes population information.
+
+        Writes population information to disk (or memory if `file_path` is set 
+        to 'memory'). Precision of values written disk are determined by the
+        `precision` attribute.
+        """
+
         # Aggregate outputs into single array and turn convert into
         # Pandas DataFrame which has nicer writing utilities.
         hist_pops = [pop.numpy().reshape(1, -1) 
@@ -405,7 +730,18 @@ class Postdiapause(_LifeStage):
                  precision=4, 
                  sigma=1.1, 
                  mortality=0.1):
-        super().__init__(config, save, file_path, save_rate, write_rate, precision)
+        """Initializes a Postdiapause life stage.
+        
+        Args:
+          config, n_bins, min_x, max_x, save, file_path, save_rate, 
+            write_rate, precision:  See _LifeStage.__init__ for details.
+          sigma:  A float representing the initial shape to be used when
+            generating developmental variability in kernels.
+          mortality:  The default mortality rate to be applied each time step.
+        """
+
+        super().__init__(config, save, file_path, save_rate, 
+                         write_rate, precision)
         self.init_kernel_helpers(n_bins, min_x, max_x)
 
         ## Assumed Parameters
@@ -430,6 +766,16 @@ class Postdiapause(_LifeStage):
                                       requires_grad=True)
     
     def calc_mu(self, temp):
+        """Calculates mean development under in the specified temperature.
+        
+        Args:
+          temp: A float representing the current temperature.
+
+        Returns:
+          A 0-dim tensor representing the mean development under one sub-daily
+          time step at the specified temperature.
+        """
+
         mu = (
             self.config.delta_t
             * (torch.maximum(
@@ -443,6 +789,7 @@ class Postdiapause(_LifeStage):
         return mu
     
     def calc_starvation(self, temp):
+        """Calculates starvation rate based on current temperature."""
         return (((temp < self.changepoint)
                 * self.preincrease)
                 + ((temp > self.changepoint)
@@ -464,7 +811,18 @@ class FirstInstar(_LifeStage):
                  precision=4, 
                  sigma=1.1, 
                  mortality=0.1):
-        super().__init__(config, save, file_path, save_rate, write_rate, precision)
+        """Initializes a FirstInstar life stage.
+        
+        Args:
+          config, n_bins, min_x, max_x, save, file_path, save_rate, 
+            write_rate, precision:  See _LifeStage.__init__ for details.
+          sigma:  A float representing the initial shape to be used when
+            generating developmental variability in kernels.
+          mortality:  The default mortality rate to be applied each time step.
+        """
+
+        super().__init__(config, save, file_path, save_rate, 
+                         write_rate, precision)
         self.init_kernel_helpers(n_bins, min_x, max_x)
 
         ## Assumed parameters
@@ -483,6 +841,16 @@ class FirstInstar(_LifeStage):
                                       requires_grad=True)
         
     def calc_mu(self, temp):
+        """Calculates mean development under in the specified temperature.
+        
+        Args:
+          temp: A float representing the current temperature.
+
+        Returns:
+          A 0-dim tensor representing the mean development under one sub-daily
+          time step at the specified temperature.
+        """
+
         mu = (
             self.config.delta_t
             * util.Logan_TM2(temp, 
@@ -507,7 +875,18 @@ class SecondInstar(_LifeStage):
                  precision=4, 
                  sigma=1.1, 
                  mortality=0.1):
-        super().__init__(config, save, file_path, save_rate, write_rate, precision)
+        """Initializes a SecondInstar life stage.
+        
+        Args:
+          config, n_bins, min_x, max_x, save, file_path, save_rate, 
+            write_rate, precision:  See _LifeStage.__init__ for details.
+          sigma:  A float representing the initial shape to be used when
+            generating developmental variability in kernels.
+          mortality:  The default mortality rate to be applied each time step.
+        """
+
+        super().__init__(config, save, file_path, save_rate, 
+                         write_rate, precision)
         self.init_kernel_helpers(n_bins, min_x, max_x)
 
         ## Assumed parameters
@@ -525,6 +904,16 @@ class SecondInstar(_LifeStage):
                                       requires_grad=True)
     
     def calc_mu(self, temp):
+        """Calculates mean development under in the specified temperature.
+        
+        Args:
+          temp: A float representing the current temperature.
+
+        Returns:
+          A 0-dim tensor representing the mean development under one sub-daily
+          time step at the specified temperature.
+        """
+
         mu = (
             self.config.delta_t
             * util.Logan_TM1(temp, 
@@ -549,7 +938,18 @@ class ThirdInstar(_LifeStage):
                  precision=4, 
                  sigma=1.1, 
                  mortality=0.1):
-        super().__init__(config, save, file_path, save_rate, write_rate, precision)
+        """Initializes a ThirdInstar life stage.
+        
+        Args:
+          config, n_bins, min_x, max_x, save, file_path, save_rate, 
+            write_rate, precision:  See _LifeStage.__init__ for details.
+          sigma:  A float representing the initial shape to be used when
+            generating developmental variability in kernels.
+          mortality:  The default mortality rate to be applied each time step.
+        """
+
+        super().__init__(config, save, file_path, save_rate, 
+                         write_rate, precision)
         self.init_kernel_helpers(n_bins, min_x, max_x)
 
         ## Assumed Parameters
@@ -568,6 +968,16 @@ class ThirdInstar(_LifeStage):
                                       requires_grad=True)
     
     def calc_mu(self, temp):
+        """Calculates mean development under in the specified temperature.
+        
+        Args:
+          temp: A float representing the current temperature.
+
+        Returns:
+          A 0-dim tensor representing the mean development under one sub-daily
+          time step at the specified temperature.
+        """
+
         mu = (
             self.config.delta_t
             * util.Logan_TM2(temp, 
@@ -593,7 +1003,18 @@ class FourthInstar(_LifeStage):
                  precision=4, 
                  sigma=1.1, 
                  mortality=0.1):
-        super().__init__(config, save, file_path, save_rate, write_rate, precision)
+        """Initializes a FourthInstar life stage.
+        
+        Args:
+          config, n_bins, min_x, max_x, save, file_path, save_rate, 
+            write_rate, precision:  See _LifeStage.__init__ for details.
+          sigma:  A float representing the initial shape to be used when
+            generating developmental variability in kernels.
+          mortality:  The default mortality rate to be applied each time step.
+        """
+
+        super().__init__(config, save, file_path, save_rate, 
+                         write_rate, precision)
         self.init_kernel_helpers(n_bins, min_x, max_x)
 
         ## Assumed Parameters
@@ -611,6 +1032,16 @@ class FourthInstar(_LifeStage):
                                       requires_grad=True)
     
     def calc_mu(self, temp):
+        """Calculates mean development under in the specified temperature.
+        
+        Args:
+          temp: A float representing the current temperature.
+
+        Returns:
+          A 0-dim tensor representing the mean development under one sub-daily
+          time step at the specified temperature.
+        """
+
         mu = (
             self.config.delta_t 
             * util.Logan_TM1(temp, 
@@ -635,7 +1066,18 @@ class FemaleFifthSixthInstar(_LifeStage):
                  precision=4, 
                  sigma=1.1, 
                  mortality=0.1):
-        super().__init__(config, save, file_path, save_rate, write_rate, precision)
+        """Initializes a FemaleFifthSixthInstar life stage.
+        
+        Args:
+          config, n_bins, min_x, max_x, save, file_path, save_rate, 
+            write_rate, precision:  See _LifeStage.__init__ for details.
+          sigma:  A float representing the initial shape to be used when
+            generating developmental variability in kernels.
+          mortality:  The default mortality rate to be applied each time step.
+        """
+
+        super().__init__(config, save, file_path, save_rate, 
+                         write_rate, precision)
         self.init_kernel_helpers(n_bins, min_x, max_x)
 
         ## Assumed Parameters
@@ -653,6 +1095,16 @@ class FemaleFifthSixthInstar(_LifeStage):
                                       requires_grad=True)
     
     def calc_mu(self, temp):
+        """Calculates mean development under in the specified temperature.
+        
+        Args:
+          temp: A float representing the current temperature.
+
+        Returns:
+          A 0-dim tensor representing the mean development under one sub-daily
+          time step at the specified temperature.
+        """
+
         mu = (
             self.config.delta_t 
             * util.Logan_TM1(temp, 
@@ -677,7 +1129,18 @@ class MaleFifthInstar(_LifeStage):
                  precision=4, 
                  sigma=1.1, 
                  mortality=0.1):
-        super().__init__(config, save, file_path, save_rate, write_rate, precision)
+        """Initializes a MaleFifthInstar life stage.
+        
+        Args:
+          config, n_bins, min_x, max_x, save, file_path, save_rate, 
+            write_rate, precision:  See _LifeStage.__init__ for details.
+          sigma:  A float representing the initial shape to be used when
+            generating developmental variability in kernels.
+          mortality:  The default mortality rate to be applied each time step.
+        """
+
+        super().__init__(config, save, file_path, save_rate, 
+                         write_rate, precision)
         self.init_kernel_helpers(n_bins, min_x, max_x)
 
         ## Assumed Parameters
@@ -695,6 +1158,16 @@ class MaleFifthInstar(_LifeStage):
                                       requires_grad=True)
         
     def calc_mu(self, temp):
+        """Calculates mean development under in the specified temperature.
+        
+        Args:
+          temp: A float representing the current temperature.
+
+        Returns:
+          A 0-dim tensor representing the mean development under one sub-daily
+          time step at the specified temperature.
+        """
+
         mu = (
             self.config.delta_t 
             * util.Logan_TM1(temp, 
@@ -719,7 +1192,18 @@ class FemalePupae(_LifeStage):
                  precision=4, 
                  sigma=1.1, 
                  mortality=0.1):
-        super().__init__(config, save, file_path, save_rate, write_rate, precision)
+        """Initializes a FemalePupae life stage.
+        
+        Args:
+          config, n_bins, min_x, max_x, save, file_path, save_rate, 
+            write_rate, precision:  See _LifeStage.__init__ for details.
+          sigma:  A float representing the initial shape to be used when
+            generating developmental variability in kernels.
+          mortality:  The default mortality rate to be applied each time step.
+        """
+
+        super().__init__(config, save, file_path, save_rate, 
+                         write_rate, precision)
         self.init_kernel_helpers(n_bins, min_x, max_x)
 
         ## Assumed Parameters
@@ -737,6 +1221,16 @@ class FemalePupae(_LifeStage):
                                       requires_grad=True)
 
     def calc_mu(self, temp):
+        """Calculates mean development under in the specified temperature.
+        
+        Args:
+          temp: A float representing the current temperature.
+
+        Returns:
+          A 0-dim tensor representing the mean development under one sub-daily
+          time step at the specified temperature.
+        """
+
         mu = (
             self.config.delta_t 
             * util.Logan_TM1(temp, 
@@ -761,7 +1255,18 @@ class MalePupae(_LifeStage):
                  precision=4, 
                  sigma=1.1, 
                  mortality=0.1):
-        super().__init__(config, save, file_path, save_rate, write_rate, precision)
+        """Initializes a MalePupae life stage.
+        
+        Args:
+          config, n_bins, min_x, max_x, save, file_path, save_rate, 
+            write_rate, precision:  See _LifeStage.__init__ for details.
+          sigma:  A float representing the initial shape to be used when
+            generating developmental variability in kernels.
+          mortality:  The default mortality rate to be applied each time step.
+        """
+
+        super().__init__(config, save, file_path, save_rate, 
+                         write_rate, precision)
         self.init_kernel_helpers(n_bins, min_x, max_x)
 
         ## Assumed Parameters
@@ -779,6 +1284,16 @@ class MalePupae(_LifeStage):
                                       requires_grad=True)
 
     def calc_mu(self, temp):
+        """Calculates mean development under in the specified temperature.
+        
+        Args:
+          temp: A float representing the current temperature.
+
+        Returns:
+          A 0-dim tensor representing the mean development under one sub-daily
+          time step at the specified temperature.
+        """
+
         mu = (
             self.config.delta_t 
             * util.Logan_TM1(temp, 
@@ -803,7 +1318,18 @@ class Adult(_LifeStage):
                  precision=4, 
                  sigma=1.1, 
                  mortality=0.1):
-        super().__init__(config, save, file_path, save_rate, write_rate, precision)
+        """Initializes a Adult life stage.
+        
+        Args:
+          config, n_bins, min_x, max_x, save, file_path, save_rate, 
+            write_rate, precision:  See _LifeStage.__init__ for details.
+          sigma:  A float representing the initial shape to be used when
+            generating developmental variability in kernels.
+          mortality:  The default mortality rate to be applied each time step.
+        """
+
+        super().__init__(config, save, file_path, save_rate, 
+                         write_rate, precision)
         self.init_kernel_helpers(n_bins, min_x, max_x)
 
         ## Assumed Parameters
@@ -819,6 +1345,16 @@ class Adult(_LifeStage):
                                      requires_grad=True)
     
     def calc_mu(self, temp):
+        """Calculates mean development under in the specified temperature.
+        
+        Args:
+          temp: A float representing the current temperature.
+
+        Returns:
+          A 0-dim tensor representing the mean development under one sub-daily
+          time step at the specified temperature.
+        """
+
         mu = (
             self.config.delta_t 
             * (torch.maximum(
@@ -827,26 +1363,3 @@ class Adult(_LifeStage):
                     *(temp-10))),
                 torch.tensor(0))))
         return mu
-
-<<<<<<< HEAD
-    def build_kernel(self, temps):
-        mu = torch.tensor(0.0, dtype=self.config.dtype)
-        for temp in temps:
-            mu += self.calc_mu(temp)
-        print(mu)
-        if torch.allclose(mu, torch.tensor(0, dtype=self.config.dtype)):
-            kernel = 0*self.config.x_dif
-        else:
-            kernel = util.LnormPDF(self.config.x_dif, mu, self.sigma)
-            kernel = util.validate(kernel)
-            kernel = kernel / kernel.sum(dim=0, keepdim=True)
-
-        return kernel
-
-=======
->>>>>>> 478e6373619f89a76e23b9811f7cc81cee927b37
-    def get_transfers(adult_females):
-        # Basic reproduction function, as we are currently only focusing
-        # on early season synchrony. Future versions can include more
-        # robust reproduction.
-        return 2*super().get_transfers()

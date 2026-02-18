@@ -74,20 +74,14 @@ def LnormPDF(x, mu, sigma):
             * torch.log(sigma)
             * (math.sqrt(2.0*math.pi)))
             * torch.exp(
-<<<<<<< HEAD
                 -((torch.log(x)-torch.log(mu))**2)
-                / (2*torch.log(sigma)**2)))
-    return dist
+                / (2*torch.log(sigma)**2))),
+        torch.tensor(0))
+    return result
     
 
 def validate(tensor):
     return torch.where(tensor.sum(dim=0, keepdim=True) == torch.tensor(0), torch.eye(tensor.shape[0]), tensor)
-=======
-                - ((torch.log(x)-torch.log(mu))**2)
-                / (2*torch.log(sigma)**2))),
-        0)
-    return result
->>>>>>> 478e6373619f89a76e23b9811f7cc81cee927b37
 
 
 def validate(tensor, mu):
