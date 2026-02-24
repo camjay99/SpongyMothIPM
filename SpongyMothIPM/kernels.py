@@ -27,6 +27,7 @@ import os
 import numpy as np
 import pandas as pd
 import torch
+from torch.nn.functional import pad
 
 import SpongyMothIPM.util as util
 
@@ -442,9 +443,11 @@ class Diapause(_LifeStage):
         
     def init_kernel_helpers(self, 
                             n_bins_I, 
+                            m_bins_I,
                             min_I, 
                             max_I, 
-                            n_bins_D, 
+                            n_bins_D,
+                            m_bins_D, 
                             min_D, 
                             max_D):
         """Initializes helper data needed for computing kernels.
@@ -452,6 +455,9 @@ class Diapause(_LifeStage):
         Args:
           n_bins_I:  An integer representing the number of bins to use for the
             inhibitor concentration.
+          m_bins_I:  An integer estimating the maximum number of bins forward an 
+            inhibition concentration may drop in one time step. This is used to 
+            reduce memory usage and speed up computations.
           min_I:  A float representing the smallest amount of inhibitor depleted
             tracked. The first bin will be centered on this value. Inhibitor 
             concentration is tracked as the concentration depleted to facilitate
@@ -462,6 +468,9 @@ class Diapause(_LifeStage):
             computations.
           n_bins_D:  An integer representing the number of bins to use for the
             developmental age.
+          m_bins_D:  An integer estimating the maximum number of bins forward an 
+            individual may develop in one time step. This is used to reduce 
+            memory usage and speed up computations.
           min_D:  A float representing the smallest developmental age tracked. 
             The first bin will be centered on this value.
           max_D:  A float representing the largest developmental age tracked. 
@@ -470,31 +479,62 @@ class Diapause(_LifeStage):
                 
         # Save settings for kernel
         self.n_bins_I = n_bins_I
+        self.m_bins_I = m_bins_I
         self.min_I = min_I
         self.max_I = max_I
         self.n_bins_D = n_bins_D
+        self.m_bins_D = m_bins_D
         self.min_D = min_D
         self.max_D = max_D
 
         # Create helper tensors for computing kernels
         self.shape = (n_bins_I, n_bins_D)
+        ## Create an index array for gathering kernelfor projection.
+        ## E.g. with m_I = 4, m_D = 2
+        ## 0.1 0.2 0.3 0.2 0.1     X.X X.X X.X X.X 0.1
+        ## 0.1 0.3 0.4 0.2 0.1     X.X X.X X.X 0.2 0.1
+        ## 0.2 0.2 0.3 0.1 0.1 --> X.X X.X 0.3 0.2 0.1
+        ## 0.4 0.3 0.2 0.1 0.0     X.X X.X 0.4 0.1 0.0
+        ## 0.1 0.2 0.3 0.2 0.1     X.X 0.2 0.3 0.1 0.1
+        ## 0.2 0.2 0.2 0.2 0.2     0.1 0.3 0.2 0.2 0.2
+        ##  ...                     ...
+        index = torch.arange(100, dtype=torch.int64)
+        index = pad(index,  # Pad for first stride
+                    (10*self.m_bins_D-1-(10-self.m_bins_D), 0)) 
+        index = index.as_strided(
+            (self.n_bins_I*self.n_bins_D, self.m_bins_I, self.m_bins_D),
+            (1, 10, 1)) # Iterate over I and D
+        index = index.reshape(self.n_bins_I*self.n_bins_D, 
+                              self.m_bins_I*self.m_bins_D)
         ## Variables values of bin centers
-        self.Is = torch.linspace(min_I, max_I, n_bins_I)
-        self.Ds = torch.linspace(min_D, max_D, n_bins_D) 
-        ## Reshape bin center tensors for broadcasting
-        self.from_I = torch.reshape(self.Is, (n_bins_I, 1, 1, 1)) 
-        self.to_I = torch.reshape(self.Is, (1, 1, n_bins_I, 1))
-        self.from_D = torch.reshape(self.Ds, (1, n_bins_D, 1, 1))
-        self.to_D = torch.reshape(self.Ds, (1, 1, 1, n_bins_D))
+        ## Is looks like 0 0 0 ... 0.1 0.1 0.1 ... 0.2 0.2 0.2 ...
+        ## Ds looks like 0 0.1 0.2 ... 0 0.1 0.2 ... 0 0.1 0.2 ...
+        self.Is = (torch.linspace(
+                    self.min_I, 
+                    self.max_I, 
+                    self.n_bins_I).reshape(-1,1)
+                   * torch.ones(self.n_bins_D)).reshape(-1, 1)
+        self.Ds = (torch.ones((self.n_bins_I, 1))
+                   * torch.linspace(
+                      self.min_D, 
+                      self.max_D, 
+                      self.n_bins_D)).reshape(-1, 1)
         ## Create tensors representing growth increments
         ## These are used to calculate probabilities of moving between bins
-        self.I_dif = torch.maximum(torch.tensor(0), self.to_I - self.from_I)
-        self.D_dif = torch.maximum(torch.tensor(0), self.to_D - self.from_D)
+        self.I_dif = torch.linspace(
+                        self.max_I, 
+                        self.min_I, 
+                        self.n_bins_I)[-self.m_bins_I:]
+        self.D_dif = torch.linspace(
+                        self.max_D, 
+                        self.min_D, 
+                        self.n_bins_D))[-self.m_bins_D:]
+        self.I_maxgrowth = (self.I_dif + self.Is - 1/(2*(self.n_bins_I-1))) >= 1
+        self.D_maxgrowth = (self.D_dif + self.Ds - 1/(2*(self.n_bins_D-1))) >= 1
         ## Create tensors for adding/removing individuals from this life stage.
-        self.grid2d = torch.squeeze(torch.ones_like(self.from_I)*self.from_D)
-        self.grid2d_for_transfer = self.grid2d >= 1
-        self.input_grid2d = torch.zeros_like(self.grid2d)
-        self.input_grid2d[0, 0] = 1
+        self.incoming = torch.zeros_like(self.Ds)
+        self.incoming[0, 0] = 1
+        self.outgoing = self.Ds >= 1
 
     def calc_mu_I(self, temp):
         """Calculates mean inhibitor depletion in the specified temperature.
@@ -581,53 +621,39 @@ class Diapause(_LifeStage):
         # reshape into a 2D matrix to take advantage of matrix multiplication.
         # To simplify calculations, we keep track of 1-I rather than I, so that
         # all traits are always increasing.
+        
         mu_I = torch.tensor(0, dtype=self.config.dtype)
         mu_D = torch.tensor(0, dtype=self.config.dtype)
         for temp in temps:
             mu_I = mu_I + self.calc_mu_I(temp)
             mu_D = mu_D + self.calc_mu_D(temp)
         
-        kernel_I_4D = util.LnormCDF(self.I_dif - 1/(2*(self.n_bins_I-1)), 
-                                    mu_I, self.sigma_I)
-        kernel_I_4D = torch.diff(kernel_I_4D, 
-                            dim=2, 
-                            append=torch.ones((self.n_bins_I,
-                                               self.n_bins_D,
-                                               1,
-                                               1)))
+        kernel_I = util.LnormCDF(self.I_dif - 1/(2*(self.n_bins_I-1)), 
+                                  mu_I, self.sigma_I)
+        kernel_I = torch.where(self.I_maxgrowth,
+                               self.I_maxgrowth,
+                               kernel_I)
+        kernel_I = -1*torch.diff(kernel_I, 
+                            dim=1, 
+                            prepend=torch.ones((self.n_bins_I*self.n_bins_D,1)))
+        kernel_I = kernel_I.reshape(self.n_bins_I*self.n_bins_D,
+                                    self.m_bins_I,
+                                    1)
 
-        kernel_D_4D = util.LnormCDF(self.D_dif - 1/(2*(self.n_bins_D-1)), 
+        kernel_D = util.LnormCDF(self.D_dif - 1/(2*(self.n_bins_D-1)), 
                                     mu_D, self.sigma_D)
-        kernel_D_4D = torch.diff(kernel_D_4D, 
-                            dim=3, 
-                            append=torch.ones((self.n_bins_I,
-                                               self.n_bins_D,
-                                               1,
-                                               1)))
+        kernel_D = torch.where(self.D_maxgrowth,
+                               self.D_maxgrowth,
+                               kernel_D)
+        kernel_D = -1*torch.diff(kernel_D, 
+                            dim=1, 
+                            prepend=torch.ones((self.n_bins_I*self.n_bins_D,1)))
+        kernel_D = kernel_D.reshape(self.n_bins_I*self.n_bins_D,
+                                    1,
+                                    self.m_bins_I)
 
-        kernel_4D = kernel_I_4D * kernel_D_4D
-        
-        # Nans can be generated as some of the "state space" currently
-        # contains unreachable states.
-        #kernel_4D = torch.nan_to_num(kernel_4D)
-        if twoD:
-            # Need to reshape kernel so that it can be 
-            # used in matrix-vector multiplication.
-            kernel_2D = torch.reshape(kernel_4D, 
-                                      (self.n_bins_I, 
-                                       self.n_bins_D, 
-                                       self.n_bins_I*self.n_bins_D))
-            kernel_2D = torch.permute(kernel_2D, (2, 0, 1))
-            kernel_2D = torch.reshape(kernel_2D, 
-                                      (self.n_bins_I*self.n_bins_D, 
-                                       self.n_bins_I*self.n_bins_D))
-            
-            # Also reshape to create means
-            mu = torch.reshape(mu_I+mu_D, (1, self.n_bins_I*self.n_bins_D))
-            kernel_2D = util.validate(kernel_2D, mu)
-            return kernel_2D
-        else:
-            return kernel_4D
+        kernel = (kernel_I*kernel_D).reshape(self.n_bins_I*self.n_bins_D, -1)
+        return kernel
     
     def init_pop(self, total, location_I, scale_I, 
                  location_D=None, scale_D=None):
@@ -701,6 +727,7 @@ class Diapause(_LifeStage):
 
         # Aggregate outputs into single array and turn convert into
         # Pandas DataFrame which has nicer writing utilities.
+        
         hist_pops = [pop.numpy().reshape(1, -1) 
                          for pop in self.hist_pops]
         arr = np.concatenate(hist_pops, axis=0)
