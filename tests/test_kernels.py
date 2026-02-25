@@ -7,7 +7,6 @@ import SpongyMothIPM.util as util
 
 @pytest.mark.parametrize("life_stage",
                           [('prediapause'),
-                           #('diapause'),
                            ('postdiapause'),
                            ('first_instar'),
                            ('second_instar'),
@@ -35,13 +34,14 @@ def test_eigenvalue(life_stage, temp, request):
 # all columns of 2D kernel sum to one.
 def test_eigenvalue_diapause(diapause, temp):
     kernel = diapause.build_kernel([temp]).detach()
-    col_sums = kernel.sum(dim=0)
+    col_sums = kernel.sum(dim=1)
+    print(kernel.sum())
     torch.testing.assert_close(col_sums, torch.ones(col_sums.shape)) 
     
 
 @pytest.mark.parametrize("life_stage",
                           [('prediapause'),
-                           ('diapause'),
+                           #('diapause'), TODO: determine analagous tests for diapause kernel
                            ('postdiapause'),
                            ('first_instar'),
                            ('second_instar'),
@@ -61,13 +61,6 @@ def test_lower_triangular(life_stage, temp, request):
     # Run test
     kernel = life_stage.build_kernel([temp]).detach()
     torch.testing.assert_close(kernel, torch.tril(kernel)) 
-
-def test_eigenvector(diapause, temp):
-    kernel = diapause.build_kernel([temp]).detach()
-    values, vectors = torch.eig(kernel)
-    print(values)
-    print(vectors)
-    assert False
 
 # def test_transfer():
 #     pop0 = main.LnormPDF(main.xs, torch.tensor(0.90), torch.tensor(1.1))

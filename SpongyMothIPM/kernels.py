@@ -371,10 +371,12 @@ class Diapause(_LifeStage):
                  write_rate=10, 
                  precision=4, 
                  n_bins_I=100, 
+                 m_bins_I=5,
                  min_I=0,
                  max_I=1.1880,
                  sigma_I=1.5, 
                  n_bins_D=100, 
+                 m_bins_D=5,
                  min_D=0,
                  max_D=1,
                  sigma_D=1.5, 
@@ -409,7 +411,8 @@ class Diapause(_LifeStage):
 
         super().__init__(config, save, file_path, save_rate, 
                          write_rate, precision)
-        self.init_kernel_helpers(n_bins_I, min_I, max_I, n_bins_D, min_D, max_D)
+        self.init_kernel_helpers(n_bins_I, m_bins_I, min_I, max_I, 
+                                 n_bins_D, m_bins_D, min_D, max_D)
 
         ## Assumed Parameters
         self.c = torch.tensor(-5.627108200)
@@ -477,7 +480,7 @@ class Diapause(_LifeStage):
             The last bin will be centered on this value.
         """
                 
-        # Save settings for kernel
+        # Save settings for kernel, use I for both if no D specified
         self.n_bins_I = n_bins_I
         self.m_bins_I = m_bins_I
         self.min_I = min_I
@@ -498,12 +501,14 @@ class Diapause(_LifeStage):
         ## 0.1 0.2 0.3 0.2 0.1     X.X 0.2 0.3 0.1 0.1
         ## 0.2 0.2 0.2 0.2 0.2     0.1 0.3 0.2 0.2 0.2
         ##  ...                     ...
-        index = torch.arange(100, dtype=torch.int64)
+        index = torch.arange(self.n_bins_I*self.n_bins_D, dtype=torch.int64)
         index = pad(index,  # Pad for first stride
-                    (10*self.m_bins_D-1-(10-self.m_bins_D), 0)) 
+                    ((self.n_bins_I*self.m_bins_D-1
+                      - (self.n_bins_I-self.m_bins_D)),
+                     0)) 
         index = index.as_strided(
             (self.n_bins_I*self.n_bins_D, self.m_bins_I, self.m_bins_D),
-            (1, 10, 1)) # Iterate over I and D
+            (1, self.n_bins_D, 1)) # Iterate over I and D
         index = index.reshape(self.n_bins_I*self.n_bins_D, 
                               self.m_bins_I*self.m_bins_D)
         ## Variables values of bin centers
@@ -528,13 +533,15 @@ class Diapause(_LifeStage):
         self.D_dif = torch.linspace(
                         self.max_D, 
                         self.min_D, 
-                        self.n_bins_D))[-self.m_bins_D:]
+                        self.n_bins_D)[-self.m_bins_D:]
         self.I_maxgrowth = (self.I_dif + self.Is - 1/(2*(self.n_bins_I-1))) >= 1
+        self.I_maxgrowth[:, -1] = 0 # If at max age, no growth is okay
         self.D_maxgrowth = (self.D_dif + self.Ds - 1/(2*(self.n_bins_D-1))) >= 1
+        self.D_maxgrowth[:, -1] = 0 # If at max age, no growth is okay
         ## Create tensors for adding/removing individuals from this life stage.
-        self.incoming = torch.zeros_like(self.Ds)
-        self.incoming[0, 0] = 1
-        self.outgoing = self.Ds >= 1
+        self.incoming = torch.zeros_like(self.Ds).reshape(-1, 1)
+        self.incoming[0,0] = 1
+        self.outgoing = (self.Ds >= 1).reshape(-1, 1)
 
     def calc_mu_I(self, temp):
         """Calculates mean inhibitor depletion in the specified temperature.
@@ -558,13 +565,12 @@ class Diapause(_LifeStage):
             * (torch.maximum(
                 torch.tensor(0.0),
                 -1 * (torch.maximum(
-                    -self.I_0 + self.from_I,
+                    -self.I_0 + self.Is,
                     (torch.log(rp)
-                    * (-self.from_I
+                    * (-self.Is
                        - rs)))))))
         # Change is expressed over entire input space, since
         # inhibitor depletion does not depend on development rate
-        mu_I = torch.tile(mu_I, (1, self.n_bins_D, 1, 1)) 
         return mu_I
     
     def calc_mu_D(self, temp):
@@ -595,7 +601,7 @@ class Diapause(_LifeStage):
             self.config.delta_t
             * (torch.maximum(torch.tensor(0),
                             (pdr
-                            * (1 - (self.I_0 - self.from_I)*A)))))
+                            * (1 - (self.I_0 - self.Is)*A)))))
         return mu_D
 
     def build_kernel(self, temps, twoD=True):
@@ -678,16 +684,20 @@ class Diapause(_LifeStage):
             used to initialize the developmental age of the population. If none,
             uses the same value as `scale_I`
         """
+
         if (location_D == None) and (scale_D == None):
             location_D = location_I
             scale_D = scale_I
-        pop_I = util.LnormPDF(self.from_I, 
+        pop_I = util.LnormPDF(self.Is, 
                               torch.tensor(location_I), 
                               torch.tensor(scale_I))
-        pop_D = util.LnormPDF(self.from_D, 
+        print(self.Is)
+        print(pop_I)
+        pop_D = util.LnormPDF(self.Ds, 
                               torch.tensor(location_D), 
                               torch.tensor(scale_D))
-        self.pop = torch.flatten(pop_I * pop_D)
+        print(self.Ds)
+        self.pop = pop_I * pop_D
         self.pop = self.pop*total/self.pop.sum()
 
     def get_transfers(self):
@@ -699,10 +709,8 @@ class Diapause(_LifeStage):
           developmental age, and not by inhibitor concetration.
         """
 
-        pop_2D = torch.reshape(self.pop, self.shape)
-        transfers = torch.sum(pop_2D*self.grid2d_for_transfer)
-        pop_2D = pop_2D*~self.grid2d_for_transfer
-        self.pop = torch.flatten(pop_2D)
+        transfers = torch.sum(self.pop*self.outgoing)
+        self.pop = self.pop*~self.outgoing
         return transfers
 
     def add_transfers(self, transfers=0):
@@ -713,9 +721,7 @@ class Diapause(_LifeStage):
             to this stage.
         """
                 
-        pop_2D = torch.reshape(self.pop, self.shape)
-        pop_2D = pop_2D + transfers*self.input_grid2d
-        self.pop = torch.flatten(pop_2D)
+        self.pop = self.pop + transfers*self.incoming
 
     def write(self):
         """Writes population information.

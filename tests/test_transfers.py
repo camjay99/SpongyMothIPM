@@ -8,7 +8,7 @@ import SpongyMothIPM.util as util
 def test_collect_transfer_1D(first_instar, request):
     # Manually initialize pop with known # of individuals to transfer.
     # Note that we assume max x value is 1 here.
-    first_instar.pop = torch.ones(first_instar.config.n_bins,
+    first_instar.pop = torch.ones(first_instar.n_bins,
                                 dtype=first_instar.config.dtype)
     transfers = first_instar.get_transfers()
     assert transfers == pytest.approx(1)
@@ -16,10 +16,10 @@ def test_collect_transfer_1D(first_instar, request):
 def test_collect_transfer_2D(diapause, request):
     # Manually initialize pop with known # of individuals to transfer.
     # Note that we assume max x value is 1 here.
-    diapause.pop = torch.ones(diapause.config.shape,
-                              dtype=diapause.config.dtype).flatten()
+    diapause.pop = torch.ones((diapause.n_bins_I*diapause.n_bins_D, 1),
+                              dtype=diapause.config.dtype)
     transfers = diapause.get_transfers()
-    assert transfers == pytest.approx(1.0 * diapause.config.n_bins)
+    assert transfers == pytest.approx(1.0 * diapause.n_bins_I)
 
 # Get and add transfers is identical for all life stages besides
 # diapause, therefore one test for non-diapause stages suffices.
@@ -32,8 +32,8 @@ def test_transfer(stage1, stage2, mean, scale, request):
     stage1 = request.getfixturevalue(stage1)
     stage2 = request.getfixturevalue(stage2)
     # Set up populations
-    stage1.init_pop(mean, scale)
-    stage2.init_pop(mean, scale)
+    stage1.init_pop(10, mean, scale)
+    stage2.init_pop(10, mean, scale)
     initial_pop = stage1.pop.sum() + stage2.pop.sum()
     # Transfer Individuals
     transfers = stage1.get_transfers()
@@ -47,8 +47,8 @@ def test_transfer(stage1, stage2, mean, scale, request):
 # Only one transfer, as this function is shared by all life stages.
 def test_growth_order(third_instar, fourth_instar, mean, scale):
     # Set up populations
-    third_instar.init_pop(mean, scale)
-    fourth_instar.pop = torch.zeros(fourth_instar.config.n_bins)
+    third_instar.init_pop(10, mean, scale)
+    fourth_instar.pop = torch.zeros(fourth_instar.n_bins)
     # Run a trial time step
     transfers = third_instar.run_one_step([25.0])
     fourth_instar.run_one_step([25.0], transfers)

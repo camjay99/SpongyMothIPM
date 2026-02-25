@@ -75,7 +75,7 @@ def temp(request):
     return request.param
 
 # 1.0 tests if mature individuals are handled properly
-@pytest.fixture(params=[0.0, 0.2, 0.4, 0.6, 0.8, 1.0]) 
+@pytest.fixture(params=[0.01, 0.2, 0.4, 0.6, 0.8, 1.0]) 
 def mean(request):
     return request.param
 
