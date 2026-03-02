@@ -691,14 +691,33 @@ class Diapause(_LifeStage):
         pop_I = util.LnormPDF(self.Is, 
                               torch.tensor(location_I), 
                               torch.tensor(scale_I))
-        print(self.Is)
-        print(pop_I)
         pop_D = util.LnormPDF(self.Ds, 
                               torch.tensor(location_D), 
                               torch.tensor(scale_D))
-        print(self.Ds)
         self.pop = pop_I * pop_D
         self.pop = self.pop*total/self.pop.sum()
+
+    def project_pop(self, temps):
+        """Projects the population forward one day.
+        
+        Args:
+          temps: A list of floats representing sub-daily temperatures. The 
+            length of the list should match the number of sub-daily time 
+            periods (Currently not enforced).
+        """
+        kernel = self.build_kernel(temps)
+        pop_ =  pad(self.pop, # Add padding for first stride 
+                    ((self.n_bins_I*self.m_bins_D-1
+                      - (self.n_bins_I-self.m_bins_D)),
+                      0)) 
+        pop_ = pop_.as_strided(
+            (self.n_bins_I*self.n_bins_D, self.m_bins_I, self.m_bins_D),
+            (1, self.n_bins_D, 1)) # Iterate over nonzero I and D dims
+        pop_ = pop_.reshape(self.n_bins_I*self.n_bins_D, 
+                            self.m_bins_I*self.m_bins_D)
+
+        # After reshaping, vecdot is equivalent to the original matrix mult
+        self.pop = torch.linalg.vecdot(kernel, pop_, dim=0)
 
     def get_transfers(self):
         """Removes population density that has developed out of this stage. 
