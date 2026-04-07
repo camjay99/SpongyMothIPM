@@ -1,25 +1,25 @@
-"""Classes for generating kernels for various life stages based on temperature.
+# """Classes for generating kernels for various life stages based on temperature.
 
-This module contains all of the functionality required for generating projection
-kernels and maintaining an associated population. The _LifeStage helper class 
-implements basic functionality common to all kernel generators such as 
-initialization, saving, and moving individuals between populations; while other
-classes implement specific kernel generating functions for those life stages. 
+# This module contains all of the functionality required for generating projection
+# kernels and maintaining an associated population. The _LifeStage helper class 
+# implements basic functionality common to all kernel generators such as 
+# initialization, saving, and moving individuals between populations; while other
+# classes implement specific kernel generating functions for those life stages. 
 
-Classes that can be imported from this module:
-- Prediapause
-- Diapause
-- Postdiapause
-- FirstInstar
-- SecondInstar
-- ThirdInstar
-- FourthInstar
-- FemaleFifthSixthInstar
-- MaleFifthInstar
-- FemalePupae
-- MalePupae
-- Adult
-"""
+# Classes that can be imported from this module:
+# - Prediapause
+# - Diapause
+# - Postdiapause
+# - FirstInstar
+# - SecondInstar
+# - ThirdInstar
+# - FourthInstar
+# - FemaleFifthSixthInstar
+# - MaleFifthInstar
+# - FemalePupae
+# - MalePupae
+# - Adult
+# """
 
 
 import os
@@ -32,6 +32,31 @@ from torch.nn.functional import pad
 import SpongyMothIPM.util as util
 
 class _LifeStage():
+    """Implements basic functionality for life stages.
+
+    These are functionality largely common between each life stage, such as
+    saving and writing data, projecting populations, and transfering individuals
+    between stages.
+
+    Attributes:
+      config:  A Config instance describing global settings.
+      save:  A boolean indicating whether to save population information.
+      file_path: A string indicating where population info will be saved,
+        generally into a .csv file. Passing "memory" will save into an
+        in-memory list that can be accessed through the `saved_pops` field.
+      save_rate:  Number of iterations before saving population information.
+      write_rate:  Number of saves befores writing buffer out to disk.
+      precision:  Number of digits after decimal point to use while saving
+        floating points.
+      saved_pops:  A list containing in-memory copies of saved population data.
+        Only defined if `file_path` is set to "memory".
+      n_bins:  An integer representing the number of bins to separate 
+        developmental stages into.
+      min_x:  A float representing the minimum developmental age to track. 
+        The first bin will be centered on this value.
+      max_x:  A float representing the maximum developmental age to track. 
+        The last bin will be centered on this value.
+    """
     def __init__(self, 
                  config,
                  save=False, 
@@ -64,12 +89,12 @@ class _LifeStage():
         # Initialize buffers for saved information
         if self.file_path == 'memory':
             self.saved_pops = []
-        self.years = [] 
-        self.ydays = []
-        self.hist_pops = []
+        self._years = [] 
+        self._ydays = []
+        self._hist_pops = []
         # Counters for when to save and write
-        self.num_iters = 0
-        self.num_saves = 0
+        self._num_iters = 0
+        self._num_saves = 0
     
     def init_kernel_helpers(self, n_bins, min_x, max_x):
         """Initializes helper data needed for computing kernels.
@@ -88,19 +113,19 @@ class _LifeStage():
         self.min_x = min_x
         self.max_x = max_x
         # Create helper tensors for computing kernels
-        self.shape = (self.n_bins, self.n_bins)
+        self._shape = (self.n_bins, self.n_bins)
         ## Variables values of bin centers
-        self.xs = torch.linspace(self.min_x, self.max_x, self.n_bins)
+        self._xs = torch.linspace(self.min_x, self.max_x, self.n_bins)
         ## Reshape bin center tensors for broadcasting
-        self.from_x = torch.reshape(self.xs, (1, self.n_bins))
-        self.to_x = torch.reshape(self.xs, (self.n_bins, 1))
+        self._from_x = torch.reshape(self._xs, (1, self.n_bins))
+        self._to_x = torch.reshape(self._xs, (self.n_bins, 1))
         ## Create tensors representing growth increments
         ## These are used to calculate probabilities of moving between bins
-        self.x_dif = torch.maximum(torch.tensor(0), self.to_x - self.from_x)
+        self._x_dif = torch.maximum(torch.tensor(0), self._to_x - self._from_x)
         ## Create tensors for adding/removing individuals from this life stage.
-        self.xs_for_transfer = self.xs >= 1
-        self.input_xs = torch.zeros_like(self.xs)
-        self.input_xs[0] = 1
+        self._xs_for_transfer = self._xs >= 1
+        self._input_xs = torch.zeros_like(self._xs)
+        self._input_xs[0] = 1
 
     def init_pop(self, total, location, scale):
         """Initializes a sample population using a lognormal distribution.
@@ -118,10 +143,10 @@ class _LifeStage():
             used to initialize the population.
         """
 
-        self.pop = util.LnormPDF(self.xs, 
-                                 torch.tensor(location), 
-                                 torch.tensor(scale))
-        self.pop = self.pop*total/self.pop.sum()
+        self._pop = util.LnormPDF(self._xs, 
+                                  torch.tensor(location), 
+                                  torch.tensor(scale))
+        self._pop = self._pop*total/self._pop.sum()
         
     def project_pop(self, temps):
         """Projects the population forward one day.
@@ -132,7 +157,7 @@ class _LifeStage():
             periods (Currently not enforced).
         """
         kernel = self.build_kernel(temps)
-        self.pop = kernel @ self.pop
+        self._pop = kernel @ self._pop
 
     def apply_mortality(self):
         """Decreases population total density based on mortality.
@@ -141,7 +166,7 @@ class _LifeStage():
         applied in a development age-independent fashion.
         """
 
-        self.pop = self.pop*(1 - self.mortality)
+        self._pop = self._pop*(1 - self.mortality)
 
     def get_transfers(self):
         """Removes population density that has developed out of this stage.
@@ -151,8 +176,8 @@ class _LifeStage():
           developed out of this stage.
         """
 
-        transfers = torch.sum(self.pop*self.xs_for_transfer)
-        self.pop = self.pop*~self.xs_for_transfer
+        transfers = torch.sum(self._pop*self._xs_for_transfer)
+        self._pop = self._pop*~self._xs_for_transfer
         return transfers
         
     def add_transfers(self, transfers=0):
@@ -163,7 +188,7 @@ class _LifeStage():
             to this stage.
         """
 
-        self.pop = self.pop + transfers*self.input_xs
+        self._pop = self._pop + transfers*self._input_xs
 
     def run_one_step(self, met, incoming=0):
         """Completes one daily time step of the model.
@@ -206,18 +231,18 @@ class _LifeStage():
 
         # Saves output to disk.
         if self.file_path == 'memory':
-            self.saved_pops.extend(self.hist_pops)
+            self.saved_pops.extend(self._hist_pops)
         else:
             # Aggregate outputs into single array and turn convert into
             # Pandas DataFrame which has nicer writing utilities.
             hist_pops = [pop.numpy().reshape(1, -1) 
-                         for pop in self.hist_pops]
+                         for pop in self._hist_pops]
             arr = np.concatenate(hist_pops, axis=0)
-            index = pd.MultiIndex.from_arrays([self.years, self.ydays],
+            index = pd.MultiIndex.from_arrays([self._years, self._ydays],
                                             names=['year', 'yday'])
             df = pd.DataFrame(data=arr, 
                             index=index,
-                            columns=self.xs.numpy())
+                            columns=self._xs.numpy())
             df.to_csv(self.file_path, 
                     mode='a', # Append to the write file if is exists
                     header = not os.path.exists(self.file_path), # Add Header once.
@@ -237,17 +262,17 @@ class _LifeStage():
 
         # Records current population status. If the save buffer
         # has been filled, then initiates a write to disk.
-        if (self.num_iters % self.save_rate) == 0:
-            self.hist_pops.append(self.pop.detach())
-            self.years.append(year)
-            self.ydays.append(yday)
-            self.num_saves += 1
-            if (self.num_saves % self.write_rate) == 0:
+        if (self._num_iters % self.save_rate) == 0:
+            self._hist_pops.append(self._pop.detach())
+            self._years.append(year)
+            self._ydays.append(yday)
+            self._num_saves += 1
+            if (self._num_saves % self.write_rate) == 0:
                 self.write()
-                self.years = []
-                self.ydays = []
-                self.hist_pops = []
-        self.num_iters += 1
+                self._years = []
+                self._ydays = []
+                self._hist_pops = []
+        self._num_iters += 1
 
     def _validate_temps(self, met):
         """Validates that a proper Dataframe of temperatures has been passed.
@@ -291,7 +316,7 @@ class _LifeStage():
         mu = torch.tensor(0, dtype=self.config.dtype)
         for temp in temps:
             mu = mu + self.calc_mu(temp)
-        kernel = util.LnormCDF(self.x_dif - 1/(2*(self.n_bins-1)), 
+        kernel = util.LnormCDF(self._x_dif - 1/(2*(self.n_bins-1)), 
                                mu, self.sigma)
         kernel = torch.diff(kernel, 
                             dim=0, 
@@ -302,6 +327,18 @@ class _LifeStage():
 
 
 class Prediapause(_LifeStage):
+    """Represents prediapause development.
+
+    Attributes:
+      rho:  
+      t_max:
+      crit_temp_width:
+      psi:
+      sigma:  A float representing the pre-log transformed variability in 
+        development rate.
+      mortality:  A float representing the development-independent daily rate of 
+        mortality for this stage.
+    """
     def __init__(self, 
                  config, 
                  n_bins=100,
@@ -363,6 +400,34 @@ class Prediapause(_LifeStage):
     
 
 class Diapause(_LifeStage):
+    """Represents diapause development.
+
+    Attributes:
+      c:
+      pdr_t:
+      pdr_t_2:
+      pdr_t_4:
+      rp_c:
+      rs_c:
+      rs_rp:
+      I_0:
+      A_1:
+      A_2:
+      A_min:
+      A_max:
+      t_min:
+      t_max:
+      alpha:
+      beta:
+      gamma:
+      sigma_I:  A float representing the pre-log transformed variability in 
+        inhibition depletion.
+      sigma_D:  A float representing the pre-log transformed variability in 
+        development rate.
+      mortality:  A float representing the development-independent daily rate of 
+        mortality for this stage.
+      
+    """
     def __init__(self, 
                  config, 
                  save=False,
@@ -407,6 +472,28 @@ class Diapause(_LifeStage):
           sigma_D:  A float representing the initial shape to be used when
             generating developmental variability in kernels.
           mortality:  The default mortality rate to be applied each time step.
+          n_bins_I:  An integer representing the number of bins to use for the
+            inhibitor concentration.
+          m_bins_I:  An integer estimating the maximum number of bins forward an 
+            inhibition concentration may drop in one time step. This is used to 
+            reduce memory usage and speed up computations.
+          min_I:  A float representing the smallest amount of inhibitor depleted
+            tracked. The first bin will be centered on this value. Inhibitor 
+            concentration is tracked as the concentration depleted to facilitate
+              computations.
+          max_I:  A float representing the largest amount of inhibitor depleted 
+            tracked. The last bin will be centered on this value. Inhibitor 
+            concentration is tracked as the concentration depleted to facilitate 
+            computations.
+          n_bins_D:  An integer representing the number of bins to use for the
+            developmental age.
+          m_bins_D:  An integer estimating the maximum number of bins forward an 
+            individual may develop in one time step. This is used to reduce 
+            memory usage and speed up computations.
+          min_D:  A float representing the smallest developmental age tracked. 
+            The first bin will be centered on this value.
+          max_D:  A float representing the largest developmental age tracked. 
+            The last bin will be centered on this value.
         """
 
         super().__init__(config, save, file_path, save_rate, 
@@ -503,14 +590,15 @@ class Diapause(_LifeStage):
         ##  ...                     ...
         index = torch.arange(self.n_bins_I*self.n_bins_D, dtype=torch.int64)
         index = pad(index,  # Pad for first stride
-                    ((self.n_bins_I*self.m_bins_D-1
-                      - (self.n_bins_I-self.m_bins_D)),
+                    ((self.m_bins_I*self.n_bins_D-1
+                      - (self.m_bins_D-self.m_bins_D)),
                      0)) 
         index = index.as_strided(
             (self.n_bins_I*self.n_bins_D, self.m_bins_I, self.m_bins_D),
             (1, self.n_bins_D, 1)) # Iterate over I and D
         index = index.reshape(self.n_bins_I*self.n_bins_D, 
                               self.m_bins_I*self.m_bins_D)
+        self.index = index
         ## Variables values of bin centers
         ## Is looks like 0 0 0 ... 0.1 0.1 0.1 ... 0.2 0.2 0.2 ...
         ## Ds looks like 0 0.1 0.2 ... 0 0.1 0.2 ... 0 0.1 0.2 ...
@@ -656,9 +744,10 @@ class Diapause(_LifeStage):
                             prepend=torch.ones((self.n_bins_I*self.n_bins_D,1)))
         kernel_D = kernel_D.reshape(self.n_bins_I*self.n_bins_D,
                                     1,
-                                    self.m_bins_I)
+                                    self.m_bins_D)
 
         kernel = (kernel_I*kernel_D).reshape(self.n_bins_I*self.n_bins_D, -1)
+
         return kernel
     
     def init_pop(self, total, location_I, scale_I, 
@@ -685,8 +774,9 @@ class Diapause(_LifeStage):
             uses the same value as `scale_I`
         """
 
-        if (location_D == None) and (scale_D == None):
+        if (location_D is None):
             location_D = location_I
+        if (scale_D is None):
             scale_D = scale_I
         pop_I = util.LnormPDF(self.Is, 
                               torch.tensor(location_I), 
@@ -694,8 +784,23 @@ class Diapause(_LifeStage):
         pop_D = util.LnormPDF(self.Ds, 
                               torch.tensor(location_D), 
                               torch.tensor(scale_D))
-        self.pop = pop_I * pop_D
-        self.pop = self.pop*total/self.pop.sum()
+        self._pop = pop_I * pop_D
+        self._pop = self._pop*total/self._pop.sum()
+        self._pop = self._pop.reshape(-1)
+
+    def _transform_pop(self):
+        # Add sufficient padding to start.
+        # This is equal to the number of 
+        pop_ =  pad(self._pop, 
+                    ((self.n_bins_D*(self.m_bins_I-1)
+                      + (self.m_bins_D-1)),
+                      0)) 
+        pop_ = pop_.as_strided(
+            (self.n_bins_I*self.n_bins_D, self.m_bins_I, self.m_bins_D),
+            (1, self.n_bins_D, 1)) # Iterate over nonzero I and D dims
+        pop_ = pop_.reshape(self.n_bins_I*self.n_bins_D, 
+                            self.m_bins_I*self.m_bins_D)
+        return pop_
 
     def project_pop(self, temps):
         """Projects the population forward one day.
@@ -706,18 +811,12 @@ class Diapause(_LifeStage):
             periods (Currently not enforced).
         """
         kernel = self.build_kernel(temps)
-        pop_ =  pad(self.pop, # Add padding for first stride 
-                    ((self.n_bins_I*self.m_bins_D-1
-                      - (self.n_bins_I-self.m_bins_D)),
-                      0)) 
-        pop_ = pop_.as_strided(
-            (self.n_bins_I*self.n_bins_D, self.m_bins_I, self.m_bins_D),
-            (1, self.n_bins_D, 1)) # Iterate over nonzero I and D dims
-        pop_ = pop_.reshape(self.n_bins_I*self.n_bins_D, 
-                            self.m_bins_I*self.m_bins_D)
+        #kernel = torch.gather(kernel, 0, self.index)
+        pop_ = self._transform_pop()
 
         # After reshaping, vecdot is equivalent to the original matrix mult
-        self.pop = torch.linalg.vecdot(kernel, pop_, dim=0)
+        temp = torch.linalg.vecdot(kernel, pop_, dim=1)
+        self._pop = temp
 
     def get_transfers(self):
         """Removes population density that has developed out of this stage. 
@@ -728,8 +827,8 @@ class Diapause(_LifeStage):
           developmental age, and not by inhibitor concetration.
         """
 
-        transfers = torch.sum(self.pop*self.outgoing)
-        self.pop = self.pop*~self.outgoing
+        transfers = torch.sum(self._pop*self.outgoing)
+        self._pop = self._pop*~self.outgoing
         return transfers
 
     def add_transfers(self, transfers=0):
@@ -740,7 +839,7 @@ class Diapause(_LifeStage):
             to this stage.
         """
                 
-        self.pop = self.pop + transfers*self.incoming
+        self._pop = self._pop + transfers*self.incoming
 
     def write(self):
         """Writes population information.
@@ -754,15 +853,15 @@ class Diapause(_LifeStage):
         # Pandas DataFrame which has nicer writing utilities.
         
         hist_pops = [pop.numpy().reshape(1, -1) 
-                         for pop in self.hist_pops]
+                         for pop in self._hist_pops]
         arr = np.concatenate(hist_pops, axis=0)
-        labels = [f'{x:.{self.precision}e}_{y:.{self.precision}e}' 
-                  for x in self.Is for y in self.Ds]
-        index = pd.MultiIndex.from_arrays([self.years, self.ydays],
+        # labels = [f'{x:.{self.precision}e}_{y:.{self.precision}e}' 
+        #           for x in self.Is[::self.n_bins_D] for y in self.Ds[:self.n_bins_D]]
+        index = pd.MultiIndex.from_arrays([self._years, self._ydays],
                                           names=['year', 'yday'])
         df = pd.DataFrame(data=arr, 
-                          index=index,
-                          columns=labels)
+                          index=index)#,
+#                          columns=labels)
         df.to_csv(self.file_path, 
                   mode='a', # Append to the write file if is exists
                   header = not os.path.exists(self.file_path), # Add Header once.
@@ -832,7 +931,7 @@ class Postdiapause(_LifeStage):
             self.config.delta_t
             * (torch.maximum(
                 (self.tau + torch.exp(self.delta*temp) # R_T(0)
-                 + (self.from_x
+                 + (self._from_x
                     * (self.omega 
                        + self.kappa*temp 
                        + self.psi*temp**2 
