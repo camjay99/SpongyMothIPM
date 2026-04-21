@@ -38,11 +38,10 @@ landcover = (ee.ImageCollection('MODIS/061/MCD12Q1')
                 .filterDate("2000-01-01", "2026-01-01")
                 .filterBounds(region)
                 .select('LC_Type1')
-                .map(lambda image: image.gte(3).And(image.lte(5)).copyProperties(image))
-                .first())
+                .map(lambda image: image.gte(3).And(image.lte(5)).copyProperties(image)))
 
 # Create the folder if it doesn't exist
-output_folder = './Test'
+output_folder = 'C:/Users/406260/landcover'
 if not os.path.exists(output_folder):
     os.makedirs(output_folder)
 out_dir = os.path.join(os.getcwd(), output_folder)
