@@ -38,7 +38,7 @@ landcover = (ee.ImageCollection('MODIS/061/MCD12Q1')
                 .filterDate("2000-01-01", "2026-01-01")
                 .filterBounds(region)
                 .select('LC_Type1')
-                .map(function (image) {return image.gte(3).and(image.lte(5)).copyProperties(image);})
+                .map(lambda image: image.gte(3).And(image.lte(5)).copyProperties(image))
                 .first())
 
 # Create the folder if it doesn't exist
