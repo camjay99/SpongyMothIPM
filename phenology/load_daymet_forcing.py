@@ -25,7 +25,7 @@ import numpy as np
 import rasterio as rio
 from rasterio.enums import Resampling
 from rasterio.transform import array_bounds
-from rasterio.warp import reproject
+from rasterio.warp import reproject, transform_bounds
 from rasterio.windows import Window, from_bounds
 
 
@@ -62,9 +62,32 @@ def create_window_grid(
 def list_daily_daymet_files(daymet_dir: str, year: int) -> List[str]:
     """List daily Daymet files for a year using YYYY*.tif naming."""
     # Load December of previous year to September of current year
-    pattern1 = os.path.join(daymet_dir, f"{year-1}12*.tif")
-    pattern2 = os.path.join(daymet_dir, f"{year}0*.tif")
-    files = sorted(glob.glob(pattern1) + glob.glob(pattern2))
+    # Load each month one at a time to validate enough files were downloaded
+    pattern_dec = os.path.join(daymet_dir, f"{year-1}12*.tif")
+    pattern_jan = os.path.join(daymet_dir, f"{year}01*.tif")
+    pattern_feb = os.path.join(daymet_dir, f"{year}02*.tif")
+    pattern_mar = os.path.join(daymet_dir, f"{year}03*.tif")
+    pattern_apr = os.path.join(daymet_dir, f"{year}04*.tif")
+    pattern_may = os.path.join(daymet_dir, f"{year}05*.tif")
+    pattern_jun = os.path.join(daymet_dir, f"{year}06*.tif")
+    pattern_jul = os.path.join(daymet_dir, f"{year}07*.tif")
+    pattern_aug = os.path.join(daymet_dir, f"{year}08*.tif")
+    pattern_sep = os.path.join(daymet_dir, f"{year}09*.tif")
+    print(len(glob.glob(pattern_dec)))
+    print(len(glob.glob(pattern_jan)))
+    print(len(glob.glob(pattern_feb)))
+    print(len(glob.glob(pattern_mar)))
+    print(len(glob.glob(pattern_apr)))
+    print(len(glob.glob(pattern_may)))
+    print(len(glob.glob(pattern_jun)))
+    print(len(glob.glob(pattern_jul)))
+    print(len(glob.glob(pattern_aug)))
+    print(len(glob.glob(pattern_sep)))
+    files = sorted(glob.glob(pattern_dec) + glob.glob(pattern_jan) +
+                   glob.glob(pattern_feb) + glob.glob(pattern_mar) +
+                   glob.glob(pattern_apr) + glob.glob(pattern_may) +
+                   glob.glob(pattern_jun) + glob.glob(pattern_jul) +
+                   glob.glob(pattern_aug) + glob.glob(pattern_sep))
     if not files:
         raise FileNotFoundError(f"No Daymet files found for year {year} in {daymet_dir}")
     return files
@@ -111,8 +134,8 @@ def read_and_reproject_daymet(
 
     with rio.open(daymet_path) as src:
         dst_bounds = array_bounds(dst_height, dst_width, dst_transform)
-        src_window = from_bounds(*dst_bounds, transform=src.transform)
-
+        src_bounds = transform_bounds(dst_crs, src.crs, *dst_bounds)
+        src_window = from_bounds(*src_bounds, transform=src.transform)
         # Requested mapping is 0-based: tmax=0, tmin=1, dayl=2.
         # Rasterio band indices are 1-based: [1, 2, 3].
         src_data = src.read(
@@ -120,7 +143,6 @@ def read_and_reproject_daymet(
             window=src_window,
             boundless=True,
         )
-
         dest = np.full((3, dst_height, dst_width), np.nan, dtype=np.float32)
 
         reproject(
@@ -153,19 +175,30 @@ def load_year_forcing(
     """
     daymet_files = list_daily_daymet_files(daymet_dir, year)
     dst_profile = get_target_grid(imagery_path, window)
-
+    print('Reading using transform: ', dst_profile)
     dest_days: List[np.ndarray] = []
-
     for daymet_path in daymet_files:
         dest_day = read_and_reproject_daymet(
             daymet_path=daymet_path,
             dst_profile=dst_profile
         )
         dest_days.append(dest_day)
-
     dest = np.stack(dest_days, axis=0)
     tavg = (dest[:, 0, :, :] + dest[:, 1, :, :]) / 2.0
     cu = np.cumsum(np.less(tavg, chill_threshold), axis=0).astype(np.float32)
     dayl = dest[:, 2, :, :]/86400.0
+
+    # On leap years, December 31st is missing, so we only discard 30 days instead of 31
+    # ensure every data frame has the same number of observations.
+    print('before', tavg.shape)
+    if (year-1) % 4 == 0:
+        tavg = tavg[30:,:,:]
+        cu = cu[30:,:,:]
+        dayl = dayl[30:,:,:]
+    else:
+        tavg = tavg[31:,:,:]
+        cu = cu[31:,:,:]
+        dayl = dayl[31:,:,:]
+    print('after', tavg.shape)
 
     return tavg, dayl, cu
