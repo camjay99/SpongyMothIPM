@@ -12,20 +12,78 @@ import torch
 
 import load_daymet_forcing
 
+
+########################################
+# Parse arguments for running on cluster
+########################################
+
+parser = argparse.ArgumentParser(
+    description='Options for fitting phenology models to MODIS data.')
+
+# Device to use for fitting. Options are "cpu" and "cuda". 
+# Note that using cuda requires a GPU with sufficient memory to 
+# hold the data and model parameters.
+parser.add_argument('--device', '-d', type=str, action='store_true')
+
+# Dtype to use in fitting. Using float32 will reduce both memory usage and
+# precision. Using float64 will increase memory usage but may improve precision.
+parser.add_argument('--dtype', '-t', type=str, action='store_true',
+                    choices=['float32', 'float64'], default='float32')
+
+# Number of years to include in fitting. Years included will start at 2001.
+parser.add_argument('--num_years', '-y', type=int, action='store_true', 
+                    default=24)
+
+# Width and height of windows in MODIS pixels. Should be a multiple of 10.
+parser.add_argument('--height', '-h', type=int, action='store_true',
+                    default=100)
+parser.add_argument('--width', '-w', type=int, action='store_true',
+                    default=100)
+
+# Window number to fit model for. Should be less than total number of windows.
+parser.add_argument('--window', '-n', type=int, action='store_true',
+                    default=0)
+
+# Number of epochs for model fitting. More epochs will increase runtime but may improve fit.
+parser.add_argument('--num_epochs', '-e', type=int, action='store_true',
+                    default=50)
+
+# Parse arguments provided to script
+args = parser.parse_args()
+
+
 ##################################
 # Set constants
 ##################################
 
-device='cpu' # Device to run optimizing code
-dtype=torch.float32 # Dtype of data
-num_years = 2 # Number of years in the analysis
-num_days = 213 # Number of days since November 1st of previous year to use
+# Device to run optimizing code
+device=args.device 
+if device == 'cuda':
+   assert torch.cuda.is_available(), "CUDA resources not available when cuda device specified."
+
+# Dtype of data
+if (args.dtype == 'float32'): 
+    dtype = torch.float32
+elif (args.dtype == 'float64'):
+    dtype = torch.float64
+
+# Number of years in the analysis
+num_years = args.num_years 
+if args.num_years <= 0:
+    raise ValueError("Number of years must be greater than 0.")
+elif args.num_years > 24:
+    raise ValueError("Number of years cannot be greater than 24, as data is only available from 2001 to 2024.")
+
+# Number of epochs for model fitting
+num_epochs = args.num_epochs 
+if args.num_epochs <= 0:
+    raise ValueError("Number of epochs must be greater than 0.")
 
 # Create list of windows to loop through for model fitting. 
 windows = load_daymet_forcing.create_window_grid(
-   '/lustre/scratch5/cscholl/modis/2001_01_01.tif', 100)
+   '/lustre/scratch5/cscholl/modis/2001_01_01.tif', args.height, args.width)
 print('Number of windows: ', len(windows))
-window = windows[10]
+window = windows[args.window]
 print('Using window: ', window)
 
 ##################################
@@ -35,7 +93,7 @@ print('Using window: ', window)
 print("Loading landcovers")
 # Load landcovers into single data frame for generating pixel-year samples
 landcovers = []
-for year in range(2001, 2003):
+for year in range(2001, 2001 + num_years):
   with rio.open(f'/lustre/scratch5/cscholl/landcover/{year}_01_01.tif') as src:
     landcover = src.read(1, window=window, boundless=True)
     landcovers.append(landcover)
@@ -87,7 +145,7 @@ tavgs = []
 dayls = []
 cus = []
 soss = []
-for year in range(2001, 2003):
+for year in range(2001, 2001 + num_years):
   tavg, dayl, cu = load_daymet_forcing.load_year_forcing(
       year=year,
       daymet_dir='/lustre/scratch5/cscholl/daymet',
@@ -229,8 +287,7 @@ class EarlyStopper:
     
 print("Starting model fitting")
 with torch.device(device):
-  num_epochs = 50
-  report_freq = 1
+  report_freq = 5
   optimizer = torch.optim.LBFGS([b_tavg, b_dayl, b_cu, kappa, lam], lr=1,
                                 history_size=200, max_iter=20, line_search_fn='strong_wolfe')
   es = EarlyStopper(patience=3, min_delta=0.001)
@@ -324,5 +381,6 @@ x = 'test'
 y = 'test'
 # Save results
 with rio.Env():
-    with rio.open(f'/lustre/scratch5/cscholl/pheno_params/pheno_params_{x}_{y}.tif', 'w', **profile) as dst:
+    with rio.open(f'/lustre/scratch5/cscholl/pheno_params/pheno_params_{args.window}.tif', 
+                  'w', **profile) as dst:
         dst.write(output)

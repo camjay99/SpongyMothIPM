@@ -31,7 +31,8 @@ from rasterio.windows import Window, from_bounds
 
 def create_window_grid(
     image_path: str,
-    window_size: int = 1000,
+    window_height: int = 1000,
+    window_width: int = 1000,
 ) -> List[Window]:
     """Create a grid of windows that fully covers an image.
 
@@ -45,15 +46,15 @@ def create_window_grid(
     Returns:
       A list of rasterio Window objects.
     """
-    if window_size <= 0:
-        raise ValueError("window_size must be a positive integer")
+    if window_height <= 0 or window_width <= 0:
+        raise ValueError("window_height and window_width must be positive integers")
 
     windows: List[Window] = []
     with rio.open(image_path) as src:
-        for row_off in range(0, src.height, window_size):
-            height = min(window_size, src.height - row_off)
-            for col_off in range(0, src.width, window_size):
-                width = min(window_size, src.width - col_off)
+        for row_off in range(0, src.height, window_height):
+            height = min(window_height, src.height - row_off)
+            for col_off in range(0, src.width, window_width):
+                width = min(window_width, src.width - col_off)
                 windows.append(Window(col_off, row_off, width, height))
 
     return windows
