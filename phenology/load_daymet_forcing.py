@@ -184,7 +184,8 @@ def load_year_forcing(
             dst_profile=dst_profile
         )
         dest_days.append(dest_day)
-    dest = np.stack(dest_days, axis=0)
+    dest = np.stack(dest_days, axis=0, dtype= np.float32)
+    dest[:, [0,1], :, :] = dest[:, [0,1], :, :] * 120 / 65535 - 60 # unshrink tmax/tmin
     tavg = (dest[:, 0, :, :] + dest[:, 1, :, :]) / 2.0
     cu = np.cumsum(np.less(tavg, chill_threshold), axis=0).astype(np.float32)
     dayl = dest[:, 2, :, :]/86400.0

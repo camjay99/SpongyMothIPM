@@ -3,6 +3,7 @@
 ##################################
 
 import argparse
+import json
 
 import numpy as np
 import rasterio as rio
@@ -106,7 +107,7 @@ output_pixels = output_x*output_y
 print("Creating samples")
 # Create random sample of pixel-years to be used for model fitting
 # Each sample will have coordinates relative to the output pixel they are for
-samples = []
+samples = {}
 skipped = []
 for i in range(output_x):
   for j in range(output_y):
@@ -114,23 +115,33 @@ for i in range(output_x):
     mask = landcovers[:,
                       10*i:10*(i+1),
                       10*j:10*(j+1)]
-    # Get indices of only non-zero elements
+    # Get tuple of indices along each axis of only non-zero elements
+    # e.g. ([1, 1, 4, 5, 6], <- years
+    #       [0, 10, 13, 15, 15], <- rows  
+    #       [2, 3, 3, 3, 10]) <- columns
     nonzero = np.nonzero(mask)
     # If no elements to be sampled, skip this
     if len(nonzero[0]) == 0:
       skipped.append((i,j))
-      samples.append([[-1],[-1],[-1]])
       continue
     # If less than 300 elements, add all to samples
     if len(nonzero[0]) < 300:
-      nonzero = tuple((np.resize(dim, 300) for dim in nonzero))
-      samples.append(nonzero)
+      # Iterate through each dimension and resize to 300 by repeating elements.
+      # This ensures that all samples have the same number of pixel-years, 
+      # which is required for batching in model fitting.
+      sample = tuple((np.resize(dim, 300) for dim in nonzero))
+      samples[(i,j)] = sample
       continue
-    # Randomly choose list indices for inclusion in sample
+    # Randomly choose indices for inclusion in sample without replacement
+    # Random choice must be along # of indices, not number of dimensions in data.
     indices = np.random.choice(np.arange(nonzero[0].shape[0]), 300, replace=False)
     # Get sample indices
     sample = tuple(dim[indices] for dim in nonzero)
-    samples.append(sample) # Save sample for each year.
+    samples[(i,j)] = sample # Save sample for each tile.
+
+# Save sample choices for reproducibility and later evaluation.
+with open(f'../data/samples/{args.window}.json', 'w') as f:
+    f.write(json.dumps(samples))
 
 total_pixels = output_pixels - len(skipped)
 
@@ -184,7 +195,7 @@ for i in range(output_x):
     # For each year, open data files and extract appropriate data
     for k in range(num_years):
       # Get all pixels for this year
-      sample_year = [s[samples[i*output_y + j][0] == k] for s in samples[i*output_y + j]]
+      sample_year = [s[samples[(i,j)][0] == k] for s in samples[(i,j)]]
       tavg_year = tavgs[k][:, 10*i:10*(i+1),
                          10*j:10*(j+1)]
       dayl_year = dayls[k][:, 10*i:10*(i+1),
