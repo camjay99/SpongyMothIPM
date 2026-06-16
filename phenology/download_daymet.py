@@ -6,8 +6,8 @@ import geemap
 ee.Authenticate()
 ee.Initialize(project="ee-cjc378")
 
-start_date = '2000-01-01'
-end_date = '2000-01-05'
+start_date = '2020-01-01'
+end_date = '2026-01-01'
 
 # Get region to be downloaded (either specify or create with job arrays)
 region = ee.Geometry.Polygon(
@@ -37,10 +37,17 @@ daymet = (ee.ImageCollection("NASA/ORNL/DAYMET_V4")
             .filterBounds(region)
             .filterDate(start_date, end_date)
             .filter(ee.Filter.calendarRange(12, 9, 'month'))
-            .select(['tmax', 'tmin', 'dayl']));
+            .select(['tmax', 'tmin', 'dayl']))
+
+def shrink(image):
+    temps = image.select(['tmax', 'tmin']).subtract(-60).divide(120).multiply(65535).uint16()
+    dayl = image.uint16()
+    return ee.Image([temps, dayl])
+
+daymet = daymet.map(shrink)
 
 # Create the folder if it doesn't exist
-output_folder = './Test'
+output_folder = '../data/daymet'
 if not os.path.exists(output_folder):
     os.makedirs(output_folder)
 out_dir = os.path.join(os.getcwd(), output_folder)
