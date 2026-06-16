@@ -102,12 +102,13 @@ landcovers = np.stack(landcovers, axis=0)
 
 output_x = landcovers.shape[1]//10
 output_y = landcovers.shape[2]//10
-output_pixels = output_x*output_y
+output_models = output_x*output_y
 
 print("Creating samples")
 # Create random sample of pixel-years to be used for model fitting
 # Each sample will have coordinates relative to the output pixel they are for
 samples = {}
+sample_choices = {}
 skipped = []
 for i in range(output_x):
   for j in range(output_y):
@@ -131,19 +132,21 @@ for i in range(output_x):
       # which is required for batching in model fitting.
       sample = tuple((np.resize(dim, 300) for dim in nonzero))
       samples[(i,j)] = sample
-      continue
-    # Randomly choose indices for inclusion in sample without replacement
-    # Random choice must be along # of indices, not number of dimensions in data.
-    indices = np.random.choice(np.arange(nonzero[0].shape[0]), 300, replace=False)
-    # Get sample indices
-    sample = tuple(dim[indices] for dim in nonzero)
-    samples[(i,j)] = sample # Save sample for each tile.
+      sample_choices[(i,j)] = 'all'
+    else:
+      # Randomly choose indices for inclusion in sample without replacement
+      # Random choice must be along # of indices, not number of dimensions in data.
+      indices = np.random.choice(np.arange(nonzero[0].shape[0]), 300, replace=False)
+      # Get sample indices
+      sample = tuple(dim[indices] for dim in nonzero)
+      samples[(i,j)] = sample # Save sample for each tile.
+      sample_choices[(i,j)] = indices.tolist() 
 
 # Save sample choices for reproducibility and later evaluation.
 with open(f'../data/samples/{args.window}.json', 'w') as f:
-    f.write(json.dumps(samples))
+    f.write(json.dumps(sample_choices))
 
-total_pixels = output_pixels - len(skipped)
+total_models = output_models - len(skipped)
 
 
 ##########################################
@@ -249,11 +252,11 @@ with torch.device(device):
   sos = torch.tensor(sos.transpose(1,0,2), dtype=dtype)
 
 with torch.device(device):
-  b_tavg = torch.full((1,total_pixels,1), 1, requires_grad=True, dtype=dtype)
-  b_dayl = torch.full((1,total_pixels,1), 1, requires_grad=True, dtype=dtype)
-  b_cu = torch.full((1,total_pixels,1), 0.1, requires_grad=True, dtype=dtype)
-  kappa = torch.full((1,total_pixels,1), -8, requires_grad=True, dtype=dtype)
-  lam = torch.full((1,total_pixels,1), 0.1, requires_grad=True, dtype=dtype)
+  b_tavg = torch.full((1,total_models,1), 1, requires_grad=True, dtype=dtype)
+  b_dayl = torch.full((1,total_models,1), 1, requires_grad=True, dtype=dtype)
+  b_cu = torch.full((1,total_models,1), 0.1, requires_grad=True, dtype=dtype)
+  kappa = torch.full((1,total_models,1), -8, requires_grad=True, dtype=dtype)
+  lam = torch.full((1,total_models,1), 0.1, requires_grad=True, dtype=dtype)
 
 
 ##########################################
@@ -351,11 +354,11 @@ for i in range(output_x):
 
 # Scatter parameters into full array. This ensures that final array
 # contains all pixels, even if a model wasn't fit for all of them.
-b_tavg_save = torch.full((1, output_pixels, 1), np.nan, dtype=dtype, device='cpu')
-b_dayl_save = torch.full((1, output_pixels, 1), np.nan, dtype=dtype, device='cpu')
-b_cu_save = torch.full((1, output_pixels, 1), np.nan, dtype=dtype, device='cpu')
-kappa_save = torch.full((1, output_pixels, 1), np.nan, dtype=dtype, device='cpu')
-lam_save = torch.full((1, output_pixels, 1), np.nan, dtype=dtype, device='cpu')
+b_tavg_save = torch.full((1, output_models, 1), np.nan, dtype=dtype, device='cpu')
+b_dayl_save = torch.full((1, output_models, 1), np.nan, dtype=dtype, device='cpu')
+b_cu_save = torch.full((1, output_models, 1), np.nan, dtype=dtype, device='cpu')
+kappa_save = torch.full((1, output_models, 1), np.nan, dtype=dtype, device='cpu')
+lam_save = torch.full((1, output_models, 1), np.nan, dtype=dtype, device='cpu')
 b_tavg_save.scatter_(1, torch.tensor(index).reshape(1,-1,1), b_tavg.detach().cpu())
 b_dayl_save.scatter_(1, torch.tensor(index).reshape(1,-1,1), b_dayl.detach().cpu())
 b_cu_save.scatter_(1, torch.tensor(index).reshape(1,-1,1), b_cu.detach().cpu())
