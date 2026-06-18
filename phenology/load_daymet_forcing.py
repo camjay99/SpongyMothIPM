@@ -137,8 +137,6 @@ def read_and_reproject_daymet(
         dst_bounds = array_bounds(dst_height, dst_width, dst_transform)
         src_bounds = transform_bounds(dst_crs, src.crs, *dst_bounds)
         src_window = from_bounds(*src_bounds, transform=src.transform)
-        # Requested mapping is 0-based: tmax=0, tmin=1, dayl=2.
-        # Rasterio band indices are 1-based: [1, 2, 3].
         src_data = src.read(
             indexes=[1, 2, 3],
             window=src_window,

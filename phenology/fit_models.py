@@ -175,10 +175,10 @@ for year in range(2001, 2001 + num_years):
 
 print("Sampling forcings")
 # Create forcings arrays for all samples
-tavg_allsites = []
-dayl_allsites = []
-cu_allsites = []
-sos_allsites = []
+tavg_allpixyears = []
+dayl_allpixyears = []
+cu_allpixyears = []
+sos_allpixyears = []
 print(output_x)
 print(output_y)
 # For each sample, need to collect drivers + phenology for each year and accumulate
@@ -189,10 +189,10 @@ for i in range(output_x):
       print(f'Skipping {i}, {j}')
       continue
     # Create forcings arrays for all years for this sample
-    tavg_samples = []
-    dayl_samples = []
-    cu_samples = []
-    sos_samples = []
+    tavg_pixel = []
+    dayl_pixel = []
+    cu_pixel = []
+    sos_pixel = []
     # # Create window for loading data
     # window = Window(j*10, i*10, 10, 10) # col/row but resulting array is row/col
     # For each year, open data files and extract appropriate data
@@ -207,36 +207,36 @@ for i in range(output_x):
                      10*j:10*(j+1)]
       sos_year = soss[k][:, 10*i:10*(i+1),
                        10*j:10*(j+1)]
-      # Get forcing only for pixels to be sampled
-      tavg_sample = tavg_year[(slice(None),) + (sample_year[1], sample_year[2])]
-      dayl_sample = dayl_year[(slice(None),) + (sample_year[1], sample_year[2])]
-      cu_sample = cu_year[(slice(None),) + (sample_year[1], sample_year[2])]
+      # Get forcing only for pixel-years to be sampled
+      tavg_pixyear = tavg_year[(slice(None),) + (sample_year[1], sample_year[2])]
+      dayl_pixyear = dayl_year[(slice(None),) + (sample_year[1], sample_year[2])]
+      cu_pixyear = cu_year[(slice(None),) + (sample_year[1], sample_year[2])]
       # Create sos sample arrays, which are 1 if sos has been reached and 0 otherwise. This is done by comparing the day of year to the sos day of year for each pixel.
       print(sos_year.shape)
-      sos_sample = np.arange(tavg_sample.shape[0]).reshape(-1, 1).repeat(tavg_sample.shape[1], 1)
-      sos_sample = sos_sample >= sos_year[(slice(None),) + (sample_year[1], sample_year[2])].reshape(1,-1)
+      sos_pixyear = np.arange(tavg_pixyear.shape[0]).reshape(-1, 1).repeat(tavg_pixyear.shape[1], 1)
+      sos_pixyear = sos_pixyear >= sos_year[(slice(None),) + (sample_year[1], sample_year[2])].reshape(1,-1)
       # Pad with
-      # Save each year of data
-      print('Tavg shape', tavg_sample.shape)
-      tavg_samples.append(tavg_sample)
-      dayl_samples.append(dayl_sample)
-      cu_samples.append(cu_sample)
-      sos_samples.append(sos_sample)
-    # Combine all years into single data frame
-    tavg_samples = np.concat(tavg_samples, axis=1)
-    dayl_samples = np.concat(dayl_samples, axis=1)
-    cu_samples = np.concat(cu_samples, axis=1)
-    sos_samples = np.concat(sos_samples, axis=1)
-    # Add to outputs
-    print('Tavg_samples shape: ', tavg_samples.shape)
-    tavg_allsites.append(tavg_samples)
-    dayl_allsites.append(dayl_samples)
-    cu_allsites.append(cu_samples)
-    sos_allsites.append(sos_samples)
-tavg = np.stack(tavg_allsites, axis=0)
-dayl = np.stack(dayl_allsites, axis=0)
-cu = np.stack(cu_allsites, axis=0)
-sos = np.stack(sos_allsites, axis=0)
+      # Save each pixel-year of data
+      print('Tavg shape', tavg_pixyear.shape)
+      tavg_pixel.append(tavg_pixyear)
+      dayl_pixel.append(dayl_pixyear)
+      cu_pixel.append(cu_pixyear)
+      sos_pixel.append(sos_pixyear)
+    # Combine all pixel-years into single data frame for the current pixel
+    tavg_pixel = np.concat(tavg_pixel, axis=1)
+    dayl_pixel = np.concat(dayl_pixel, axis=1)
+    cu_pixel = np.concat(cu_pixel, axis=1)
+    sos_pixel = np.concat(sos_pixel, axis=1)
+    # Add to list of all pixel-years for all pixels.
+    print('Tavg_pixel shape: ', tavg_pixel.shape)
+    tavg_allpixyears.append(tavg_pixel)
+    dayl_allpixyears.append(dayl_pixel)
+    cu_allpixyears.append(cu_pixel)
+    sos_allpixyears.append(sos_pixel)
+tavg = np.stack(tavg_allpixyears, axis=0)
+dayl = np.stack(dayl_allpixyears, axis=0)
+cu = np.stack(cu_allpixyears, axis=0)
+sos = np.stack(sos_allpixyears, axis=0)
 
 print('tavg', tavg.shape)
 print('dayl', dayl.shape)
@@ -245,6 +245,10 @@ print('cu', cu.shape)
 # Move data to GPU
 ##########################################
 
+# Tensors are organized as:
+# dim1 - days
+# dim2 - models
+# dim3 - samples (pixel-years)
 with torch.device(device):
   tavg = torch.tensor(tavg.transpose(1,0,2), dtype=dtype)
   dayl = torch.tensor(dayl.transpose(1,0,2), dtype=dtype)
@@ -315,6 +319,8 @@ with torch.device(device):
 
     pred = make_prediction(tavg, dayl, cu, b_tavg, b_dayl, b_cu, lam, kappa)
 
+    # We use the continuous ranked probability score (CRPS) as the loss function
+    # which is a common forecasting metric.
     loss = torch.sum((pred - sos)**2)
     loss.backward()
 
