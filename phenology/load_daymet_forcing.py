@@ -118,15 +118,18 @@ def get_target_grid(
     return profile
 
 
-def read_and_reproject_daymet(
+def read_daymet(
     daymet_path: str,
     dst_profile: dict
 ) -> np.ndarray:
-    """Read Daymet tmax/tmin/dayl with source windowing and reproject to target.
+    """Read Daymet tmax/tmin/dayl with source window based on a destination 
+    profile.
 
     Returns:
-      A numpy array with shape (3, rows, cols) containing reprocted data from 
-      the raster at `daymet_path`.
+      data: A numpy array with shape (3, rows, cols) containing data from the raster 
+        at `daymet_path`.
+      src_profile: The profile of the source raster with transform updated to 
+        reflect the updated extent.
     """
     dst_crs = dst_profile['crs']
     dst_height = dst_profile['height']
@@ -134,29 +137,52 @@ def read_and_reproject_daymet(
     dst_transform = dst_profile['transform']
 
     with rio.open(daymet_path) as src:
+        src_profile = src.profile
+
+        # Create corresponding source window and transform based on 
+        # destination bounds.
         dst_bounds = array_bounds(dst_height, dst_width, dst_transform)
         src_bounds = transform_bounds(dst_crs, src.crs, *dst_bounds)
         src_window = from_bounds(*src_bounds, transform=src.transform)
-        src_data = src.read(
+        src_transform = src.window_transform(src_window)
+        src_profile['transform'] = src_transform # Save for future reprojection
+
+        data = src.read(
             indexes=[1, 2, 3],
             window=src_window,
             boundless=True,
         )
-        dest = np.full((3, dst_height, dst_width), np.nan, dtype=np.float32)
+    return data, src_profile
 
-        reproject(
-            source=src_data,
-            destination=dest,
-            src_transform=src.window_transform(src_window),
-            src_crs=src.crs,
-            dst_transform=dst_transform,
-            dst_crs=dst_crs,
-            src_nodata=np.nan,
-            dst_nodata=np.nan,
-            resampling=Resampling.bilinear,
-        )
+def reproject_raster(
+    src: np.ndarray,
+    src_profile: dict,
+    dst_profile: dict
+) -> np.ndarray:
+    """Reproject a raster from source to destination profile.
+    
+    Args:
+      src: Source raster data as a numpy array.
+      src_profile: Profile of the source raster.
+      dst_profile: Profile of the destination raster.
+
+    Returns:
+      A numpy array with shape (3, rows, cols) containing reprojected data.
+    """
+    dest = np.full((3, dst_profile['height'], dst_profile['width']), 
+                   np.nan, dtype=np.float32)
+    reproject(
+        source=src,
+        destination=dest,
+        src_transform=src_profile['transform'],
+        src_crs=src_profile['crs'],
+        dst_transform=dst_profile['transform'],
+        dst_crs=dst_profile['crs'],
+        src_nodata=np.nan,
+        dst_nodata=np.nan,
+        resampling=Resampling.bilinear,
+    )
     return dest
-
 
 def load_year_forcing(
     year: int,
@@ -177,8 +203,13 @@ def load_year_forcing(
     print('Reading using transform: ', dst_profile)
     dest_days: List[np.ndarray] = []
     for daymet_path in daymet_files:
-        dest_day = read_and_reproject_daymet(
+        data, src_profile = read_daymet(
             daymet_path=daymet_path,
+            dst_profile=dst_profile
+        )
+        dest_day = reproject_raster(
+            src=data,
+            src_profile=src_profile,
             dst_profile=dst_profile
         )
         dest_days.append(dest_day)
@@ -188,8 +219,8 @@ def load_year_forcing(
     cu = np.cumsum(np.less(tavg, chill_threshold), axis=0).astype(np.float32)
     dayl = dest[:, 2, :, :]/86400.0
 
-    # On leap years, December 31st is missing, so we only discard 30 days instead of 31
-    # ensure every data frame has the same number of observations.
+    # On leap years, December 31st is missing, so we only discard 30 days 
+    # instead of 31 to ensure every data frame has the same number of observations.
     print('before', tavg.shape)
     if (year-1) % 4 == 0:
         tavg = tavg[30:,:,:]
