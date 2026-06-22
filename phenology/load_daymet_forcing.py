@@ -93,6 +93,28 @@ def list_daily_daymet_files(daymet_dir: str, year: int) -> List[str]:
         raise FileNotFoundError(f"No Daymet files found for year {year} in {daymet_dir}")
     return files
 
+def list_daily_cmip6_files(cmip6_dir: str, year: int) -> List[str]:
+    """List daily CMIP6 anomaly files for a year using *YYYY*.tif naming.
+    
+    As CMIP6 files are weekly, this function replicates each weekly file for the
+    number of days it covers to create a daily file list aligned with the Daymet files. 
+    It assumes CMIP6 files are named like "<model>_<scenario>_<year>_<doy_start>_<doy_end>.tif" 
+    where doy_start and doy_end are the day of year range covered by the file.
+    """
+    pattern = os.path.join(cmip6_dir, f"*{year}*.tif")
+    weekly_files = sorted(glob.glob(pattern))
+    if not weekly_files:
+        raise FileNotFoundError(f"No CMIP6 files found for year {year} in {cmip6_dir}")
+    daily_files = []
+    for file in weekly_files:
+        # Get week start and end from filename assuming format 
+        # like "<model>_<scenario>_<year>_<doy_start>_<doy_end>.tif"
+        filename = os.path.basename(file)
+        filename = filename.split('.')[0] # remove .tif extension
+        parts = filename.split('_')
+        daily_files.extend([file] * (int(parts[4]) - int(parts[3]) + 1))
+
+    return daily_files
 
 def get_target_grid(
     imagery_path: str,
@@ -118,8 +140,8 @@ def get_target_grid(
     return profile
 
 
-def read_daymet(
-    daymet_path: str,
+def read_dataset(
+    path: str,
     dst_profile: dict
 ) -> np.ndarray:
     """Read Daymet tmax/tmin/dayl with source window based on a destination 
@@ -136,7 +158,7 @@ def read_daymet(
     dst_width = dst_profile['width']
     dst_transform = dst_profile['transform']
 
-    with rio.open(daymet_path) as src:
+    with rio.open(path) as src:
         src_profile = src.profile
 
         # Create corresponding source window and transform based on 
@@ -148,7 +170,6 @@ def read_daymet(
         src_profile['transform'] = src_transform # Save for future reprojection
 
         data = src.read(
-            indexes=[1, 2, 3],
             window=src_window,
             boundless=True,
         )
@@ -190,6 +211,7 @@ def load_year_forcing(
     imagery_path: str,
     chill_threshold: float,
     window: Optional[Window],
+    cmip6_dir: str = "",
 ) -> Dict[str, np.ndarray]:
     """Load all daily forcings for a year and compute CU/tavg stacks.
 
@@ -199,17 +221,33 @@ def load_year_forcing(
       cu:   (days, rows, cols)
     """
     daymet_files = list_daily_daymet_files(daymet_dir, year)
+    if cmip6_dir != "":
+        cmip6_files = list_daily_cmip6_files(cmip6_dir, year)
     dst_profile = get_target_grid(imagery_path, window)
     print('Reading using transform: ', dst_profile)
     dest_days: List[np.ndarray] = []
     for daymet_path in daymet_files:
-        data, src_profile = read_daymet(
-            daymet_path=daymet_path,
+        daymet_data, daymet_profile = read_dataset(
+            path=daymet_path,
             dst_profile=dst_profile
         )
+        # If CMIP6 data is provided reproject it to align with Daymet data,
+        # and add the temperature deltas to the Daymet tmax/tmin bands.
+        if cmip6_dir != "":
+            cmip6_data, cmip6_profile = read_dataset(
+                path=cmip6_dir,
+                dst_profile=daymet_profile
+            )
+            cmip6_data = reproject_raster(
+                src=cmip6_data,
+                src_profile=cmip6_profile,
+                dst_profile=daymet_profile
+            )
+            daymet_data[[0,1], :, :] = (daymet_data[[0,1], :, :] 
+                                        + cmip6_data[0, :, :])
         dest_day = reproject_raster(
-            src=data,
-            src_profile=src_profile,
+            src=daymet_data,
+            src_profile=daymet_profile,
             dst_profile=dst_profile
         )
         dest_days.append(dest_day)
