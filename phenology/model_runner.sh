@@ -14,8 +14,8 @@ cd $HOME/SpongyMothIPM/phenology
 source "/usr/projects/hpcsoft/common/x86_64/anaconda/2023.03-python-3.10/etc/profile.d/conda.sh"
 conda activate model_fitting
 
-srun --exclusive -n 1 --output=output_%j_0 python -u fit_models.py --device=cuda -H 100 -W 100 -n 0 -e 2000 &
-srun --exclusive -n 1 --output=output_%j_1 python -u fit_models.py --device=cuda -H 100 -W 100 -n 1 -e 2000 &
-srun --exclusive -n 1 --output=output_%j_2 python -u fit_models.py --device=cuda -H 100 -W 100 -n 2 -e 2000 &
-srun --exclusive -n 1 --output=output_%j_3 python -u fit_models.py --device=cuda -H 100 -W 100 -n 3 -e 2000 &
+srun --exclusive -n 1 --output=output_%j_0 python -u fit_models_v2.py --device=cuda -H 100 -W 100 -n 0 -e 2000 &
+srun --exclusive -n 1 --output=output_%j_1 python -u fit_models_v2.py --device=cuda -H 100 -W 100 -n 1 -e 2000 &
+srun --exclusive -n 1 --output=output_%j_2 python -u fit_models_v2.py --device=cuda -H 100 -W 100 -n 2 -e 2000 &
+srun --exclusive -n 1 --output=output_%j_3 python -u fit_models_v2.py --device=cuda -H 100 -W 100 -n 3 -e 2000 &
 wait

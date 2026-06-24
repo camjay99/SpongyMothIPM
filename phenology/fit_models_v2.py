@@ -35,8 +35,8 @@ parser.add_argument('--dtype', '-t', type=str,
 parser.add_argument('--num_years', '-y', type=int, default=24)
 
 # Width and height of windows in MODIS pixels. Should be a multiple of 10.
-parser.add_argument('--height', '-h', type=int, default=100)
-parser.add_argument('--width', '-w', type=int, default=100)
+parser.add_argument('--height', '-H', type=int, default=100)
+parser.add_argument('--width', '-W', type=int, default=100)
 
 # Window number to fit model for. Should be less than total number of windows.
 parser.add_argument('--window', '-n', type=int, default=0)
@@ -55,7 +55,8 @@ args = parser.parse_args()
 # Device to run optimizing code
 device = args.device
 if device == 'cuda':
-   assert torch.cuda.is_available(), "CUDA resources not available when cuda device specified."
+    pass
+    #assert torch.cuda.is_available(), "CUDA resources not available when cuda device specified."
 
 # Dtype of data
 if (args.dtype == 'float32'):
@@ -138,7 +139,7 @@ for i in range(output_x):
       sample_choices[f"{i}_{j}"] = indices.tolist()
 
 # Save sample choices for reproducibility and later evaluation.
-with open(f'../data/samples/{args.window}.json', 'w') as f:
+with open(f'/lustre/scratch5/cscholl/samples/{args.window}.json', 'w') as f:
     f.write(json.dumps(sample_choices))
 
 total_models = output_models - len(skipped)

@@ -36,9 +36,9 @@ parser.add_argument('--num_years', '-y', type=int, action='store_true',
                     default=24)
 
 # Width and height of windows in MODIS pixels. Should be a multiple of 10.
-parser.add_argument('--height', '-h', type=int, action='store_true',
+parser.add_argument('--height', '-H', type=int, action='store_true',
                     default=100)
-parser.add_argument('--width', '-w', type=int, action='store_true',
+parser.add_argument('--width', '-W', type=int, action='store_true',
                     default=100)
 
 # Window number to fit model for. Should be less than total number of windows.
