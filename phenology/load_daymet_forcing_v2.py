@@ -83,10 +83,10 @@ def list_daily_daymet_files(daymet_dir: str, year: int) -> List[str]:
 
 def list_daily_cmip6_files(cmip6_dir: str, year: int) -> List[str]:
     """List daily CMIP6 anomaly files for a year using *YYYY*.tif naming.
-    
+
     As CMIP6 files are weekly, this function replicates each weekly file for the
-    number of days it covers to create a daily file list aligned with the Daymet files. 
-    It assumes CMIP6 files are named like "<model>_<scenario>_<year>_<doy_start>_<doy_end>.tif" 
+    number of days it covers to create a daily file list aligned with the Daymet files.
+    It assumes CMIP6 files are named like "<model>_<scenario>_<year>_<doy_start>_<doy_end>.tif"
     where doy_start and doy_end are the day of year range covered by the file.
     """
 
@@ -144,13 +144,13 @@ def read_dataset(
     path: str,
     dst_profile: dict
 ) -> np.ndarray:
-    """Read Daymet tmax/tmin/dayl with source window based on a destination 
+    """Read Daymet tmax/tmin/dayl with source window based on a destination
     profile.
 
     Returns:
-      data: A numpy array with shape (3, rows, cols) containing data from the raster 
+      data: A numpy array with shape (3, rows, cols) containing data from the raster
         at `daymet_path`.
-      src_profile: The profile of the source raster with transform updated to 
+      src_profile: The profile of the source raster with transform updated to
         reflect the updated extent.
     """
     dst_crs = dst_profile['crs']
@@ -161,7 +161,7 @@ def read_dataset(
     with rio.open(path) as src:
         src_profile = src.profile
 
-        # Create corresponding source window and transform based on 
+        # Create corresponding source window and transform based on
         # destination bounds.
         dst_bounds = array_bounds(dst_height, dst_width, dst_transform)
         src_bounds = transform_bounds(dst_crs, src.crs, *dst_bounds)
@@ -186,7 +186,7 @@ def reproject_raster(
     dst_profile: dict
 ) -> np.ndarray:
     """Reproject a raster from source to destination profile.
-    
+
     Args:
       src: Source raster data as a numpy array.
       src_profile: Profile of the source raster.
@@ -195,7 +195,7 @@ def reproject_raster(
     Returns:
       A numpy array with shape (3, rows, cols) containing reprojected data.
     """
-    dest = np.full((3, dst_profile['height'], dst_profile['width']), 
+    dest = np.full((3, dst_profile['height'], dst_profile['width']),
                    np.nan, dtype=np.float32)
     reproject(
         source=src,
@@ -248,7 +248,7 @@ def load_year_forcing(
                 src_profile=cmip6_profile,
                 dst_profile=daymet_profile
             )
-            daymet_data[[0,1], :, :] = (daymet_data[[0,1], :, :] 
+            daymet_data[[0,1], :, :] = (daymet_data[[0,1], :, :]
                                         + cmip6_data[0, :, :])
         dest_day = reproject_raster(
             src=daymet_data,

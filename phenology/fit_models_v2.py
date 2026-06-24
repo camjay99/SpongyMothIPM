@@ -11,7 +11,7 @@ from rasterio.plot import show
 from rasterio.windows import Window
 import torch
 
-import load_daymet_forcing
+import load_daymet_forcing_v2
 
 
 ########################################
@@ -21,33 +21,28 @@ import load_daymet_forcing
 parser = argparse.ArgumentParser(
     description='Options for fitting phenology models to MODIS data.')
 
-# Device to use for fitting. Options are "cpu" and "cuda". 
-# Note that using cuda requires a GPU with sufficient memory to 
+# Device to use for fitting. Options are "cpu" and "cuda".
+# Note that using cuda requires a GPU with sufficient memory to
 # hold the data and model parameters.
-parser.add_argument('--device', '-d', type=str, action='store_true')
+parser.add_argument('--device', '-d', type=str, default='cpu')
 
 # Dtype to use in fitting. Using float32 will reduce both memory usage and
 # precision. Using float64 will increase memory usage but may improve precision.
-parser.add_argument('--dtype', '-t', type=str, action='store_true',
+parser.add_argument('--dtype', '-t', type=str,
                     choices=['float32', 'float64'], default='float32')
 
 # Number of years to include in fitting. Years included will start at 2001.
-parser.add_argument('--num_years', '-y', type=int, action='store_true', 
-                    default=24)
+parser.add_argument('--num_years', '-y', type=int, default=24)
 
 # Width and height of windows in MODIS pixels. Should be a multiple of 10.
-parser.add_argument('--height', '-h', type=int, action='store_true',
-                    default=100)
-parser.add_argument('--width', '-w', type=int, action='store_true',
-                    default=100)
+parser.add_argument('--height', '-h', type=int, default=100)
+parser.add_argument('--width', '-w', type=int, default=100)
 
 # Window number to fit model for. Should be less than total number of windows.
-parser.add_argument('--window', '-n', type=int, action='store_true',
-                    default=0)
+parser.add_argument('--window', '-n', type=int, default=0)
 
 # Number of epochs for model fitting. More epochs will increase runtime but may improve fit.
-parser.add_argument('--num_epochs', '-e', type=int, action='store_true',
-                    default=50)
+parser.add_argument('--num_epochs', '-e', type=int, default=50)
 
 # Parse arguments provided to script
 args = parser.parse_args()
@@ -58,30 +53,30 @@ args = parser.parse_args()
 ##################################
 
 # Device to run optimizing code
-device=args.device 
+device = args.device
 if device == 'cuda':
    assert torch.cuda.is_available(), "CUDA resources not available when cuda device specified."
 
 # Dtype of data
-if (args.dtype == 'float32'): 
+if (args.dtype == 'float32'):
     dtype = torch.float32
 elif (args.dtype == 'float64'):
     dtype = torch.float64
 
 # Number of years in the analysis
-num_years = args.num_years 
+num_years = args.num_years
 if args.num_years <= 0:
     raise ValueError("Number of years must be greater than 0.")
 elif args.num_years > 24:
     raise ValueError("Number of years cannot be greater than 24, as data is only available from 2001 to 2024.")
 
 # Number of epochs for model fitting
-num_epochs = args.num_epochs 
+num_epochs = args.num_epochs
 if args.num_epochs <= 0:
     raise ValueError("Number of epochs must be greater than 0.")
 
-# Create list of windows to loop through for model fitting. 
-windows = load_daymet_forcing.create_window_grid(
+# Create list of windows to loop through for model fitting.
+windows = load_daymet_forcing_v2.create_window_grid(
    '/lustre/scratch5/cscholl/modis/2001_01_01.tif', args.height, args.width)
 print('Number of windows: ', len(windows))
 window = windows[args.window]
@@ -118,7 +113,7 @@ for i in range(output_x):
                       10*j:10*(j+1)]
     # Get tuple of indices along each axis of only non-zero elements
     # e.g. ([1, 1, 4, 5, 6], <- years
-    #       [0, 10, 13, 15, 15], <- rows  
+    #       [0, 10, 13, 15, 15], <- rows
     #       [2, 3, 3, 3, 10]) <- columns
     nonzero = np.nonzero(mask)
     # If no elements to be sampled, skip this
@@ -128,7 +123,7 @@ for i in range(output_x):
     # If less than 300 elements, add all to samples
     if len(nonzero[0]) < 300:
       # Iterate through each dimension and resize to 300 by repeating elements.
-      # This ensures that all samples have the same number of pixel-years, 
+      # This ensures that all samples have the same number of pixel-years,
       # which is required for batching in model fitting.
       sample = tuple((np.resize(dim, 300) for dim in nonzero))
       samples[f"{i}_{j}"] = sample
@@ -139,8 +134,8 @@ for i in range(output_x):
       indices = np.random.choice(np.arange(nonzero[0].shape[0]), 300, replace=False)
       # Get sample indices
       sample = tuple(dim[indices] for dim in nonzero)
-      samples[(i,j)] = sample # Save sample for each tile.
-      sample_choices[(i,j)] = indices.tolist() 
+      samples[f"{i}_{j}"] = sample
+      sample_choices[f"{i}_{j}"] = indices.tolist()
 
 # Save sample choices for reproducibility and later evaluation.
 with open(f'../data/samples/{args.window}.json', 'w') as f:
@@ -150,117 +145,112 @@ total_models = output_models - len(skipped)
 
 
 ##########################################
-# Load and rearrange data for computations
+# Load forcings one year at a time and
+# extract samples immediately into a dict
 ##########################################
 
-print("Loading forcings")
-# Load all of the data frames in advance
-tavgs = []
-dayls = []
-cus = []
-soss = []
-for year in range(2001, 2001 + num_years):
-  tavg, dayl, cu = load_daymet_forcing.load_year_forcing(
-      year=year,
-      daymet_dir='/lustre/scratch5/cscholl/daymet',
-      imagery_path=f'/lustre/scratch5/cscholl/modis/{year}_01_01.tif',
-      chill_threshold=5.0,
-      window=window
-  )
-  tavgs.append(tavg)
-  dayls.append(dayl)
-  cus.append(cu)
-  with rio.open(f'/lustre/scratch5/cscholl/modis/{year}_01_01.tif') as src:
-    soss.append(src.read(boundless=True, window=window))
+print("Loading forcings and sampling")
 
-print("Sampling forcings")
-# Create forcings arrays for all samples
+# Accumulate per-pixel forcing lists, keyed by (i,j).
+# Each entry holds one array per year that had samples for that pixel.
+pixel_data = {
+    (i, j): {'tavg': [], 'dayl': [], 'cu': [], 'sos': []}
+    for i in range(output_x) for j in range(output_y)
+    if (i, j) not in skipped
+}
+
+for year_idx, year in enumerate(range(2001, 2001 + num_years)):
+    print(f"Loading year {year}")
+    tavg_yr, dayl_yr, cu_yr = load_daymet_forcing_v2.load_year_forcing(
+        year=year,
+        daymet_dir='/lustre/scratch5/cscholl/daymet',
+        imagery_path=f'/lustre/scratch5/cscholl/modis/{year}_01_01.tif',
+        chill_threshold=5.0,
+        window=window
+    )
+    with rio.open(f'/lustre/scratch5/cscholl/modis/{year}_01_01.tif') as src:
+        sos_yr = src.read(boundless=True, window=window)
+
+    for i in range(output_x):
+        for j in range(output_y):
+            if (i, j) in skipped:
+                continue
+
+            # Filter sample indices to those belonging to this year
+            year_mask = samples[f"{i}_{j}"][0] == year_idx
+            if not year_mask.any():
+                continue
+
+            sample_rows = samples[f"{i}_{j}"][1][year_mask]
+            sample_cols = samples[f"{i}_{j}"][2][year_mask]
+            sample_rc = (sample_rows, sample_cols)
+
+            # Extract forcings for the sampled pixels within the 10x10 sub-tile
+            sl = (slice(None),)
+            tavg_sub = tavg_yr[:, 10*i:10*(i+1), 10*j:10*(j+1)]
+            dayl_sub = dayl_yr[:, 10*i:10*(i+1), 10*j:10*(j+1)]
+            cu_sub   = cu_yr[:,  10*i:10*(i+1), 10*j:10*(j+1)]
+            sos_sub  = sos_yr[:, 10*i:10*(i+1), 10*j:10*(j+1)]
+
+            tavg_pixyear = tavg_sub[sl + sample_rc]  # (days, n_samples)
+            dayl_pixyear = dayl_sub[sl + sample_rc]
+            cu_pixyear   = cu_sub[sl + sample_rc]
+
+            sos_vals = sos_sub[sl + sample_rc]  # (1, n_samples)
+            days = np.arange(tavg_pixyear.shape[0]).reshape(-1, 1)
+            sos_pixyear = (days >= sos_vals.reshape(1, -1)).astype(np.float32)
+
+            pixel_data[f"{i}_{j}"]['tavg'].append(tavg_pixyear)
+            pixel_data[f"{i}_{j}"]['dayl'].append(dayl_pixyear)
+            pixel_data[f"{i}_{j}"]['cu'].append(cu_pixyear)
+            pixel_data[f"{i}_{j}"]['sos'].append(sos_pixyear)
+
+# Assemble final arrays by concatenating year chunks per pixel, then stacking
+# across pixels. Shape after stack: (n_models, days, n_samples).
+print("Assembling forcing arrays")
 tavg_allpixyears = []
 dayl_allpixyears = []
-cu_allpixyears = []
-sos_allpixyears = []
-print(output_x)
-print(output_y)
-# For each sample, need to collect drivers + phenology for each year and accumulate
+cu_allpixyears   = []
+sos_allpixyears  = []
 for i in range(output_x):
-  for j in range(output_y):
-    # Skip if no samples
-    if (i,j) in skipped:
-      print(f'Skipping {i}, {j}')
-      continue
-    # Create forcings arrays for all years for this sample
-    tavg_pixel = []
-    dayl_pixel = []
-    cu_pixel = []
-    sos_pixel = []
-    # # Create window for loading data
-    # window = Window(j*10, i*10, 10, 10) # col/row but resulting array is row/col
-    # For each year, open data files and extract appropriate data
-    for k in range(num_years):
-      # Get all pixels for this year
-      sample_year = [s[samples[(i,j)][0] == k] for s in samples[(i,j)]]
-      tavg_year = tavgs[k][:, 10*i:10*(i+1),
-                         10*j:10*(j+1)]
-      dayl_year = dayls[k][:, 10*i:10*(i+1),
-                         10*j:10*(j+1)]
-      cu_year = cus[k][:, 10*i:10*(i+1),
-                     10*j:10*(j+1)]
-      sos_year = soss[k][:, 10*i:10*(i+1),
-                       10*j:10*(j+1)]
-      # Get forcing only for pixel-years to be sampled
-      tavg_pixyear = tavg_year[(slice(None),) + (sample_year[1], sample_year[2])]
-      dayl_pixyear = dayl_year[(slice(None),) + (sample_year[1], sample_year[2])]
-      cu_pixyear = cu_year[(slice(None),) + (sample_year[1], sample_year[2])]
-      # Create sos sample arrays, which are 1 if sos has been reached and 0 otherwise. This is done by comparing the day of year to the sos day of year for each pixel.
-      print(sos_year.shape)
-      sos_pixyear = np.arange(tavg_pixyear.shape[0]).reshape(-1, 1).repeat(tavg_pixyear.shape[1], 1)
-      sos_pixyear = sos_pixyear >= sos_year[(slice(None),) + (sample_year[1], sample_year[2])].reshape(1,-1)
-      # Pad with
-      # Save each pixel-year of data
-      print('Tavg shape', tavg_pixyear.shape)
-      tavg_pixel.append(tavg_pixyear)
-      dayl_pixel.append(dayl_pixyear)
-      cu_pixel.append(cu_pixyear)
-      sos_pixel.append(sos_pixyear)
-    # Combine all pixel-years into single data frame for the current pixel
-    tavg_pixel = np.concat(tavg_pixel, axis=1)
-    dayl_pixel = np.concat(dayl_pixel, axis=1)
-    cu_pixel = np.concat(cu_pixel, axis=1)
-    sos_pixel = np.concat(sos_pixel, axis=1)
-    # Add to list of all pixel-years for all pixels.
-    print('Tavg_pixel shape: ', tavg_pixel.shape)
-    tavg_allpixyears.append(tavg_pixel)
-    dayl_allpixyears.append(dayl_pixel)
-    cu_allpixyears.append(cu_pixel)
-    sos_allpixyears.append(sos_pixel)
-tavg = np.stack(tavg_allpixyears, axis=0)
+    for j in range(output_y):
+        if (i, j) in skipped:
+            continue
+        d = pixel_data[f"{i}_{j}"]
+        tavg_allpixyears.append(np.concatenate(d['tavg'], axis=1))
+        dayl_allpixyears.append(np.concatenate(d['dayl'], axis=1))
+        cu_allpixyears.append(np.concatenate(d['cu'],   axis=1))
+        sos_allpixyears.append(np.concatenate(d['sos'],  axis=1))
+
+tavg = np.stack(tavg_allpixyears, axis=0)  # (n_models, days, n_samples)
 dayl = np.stack(dayl_allpixyears, axis=0)
-cu = np.stack(cu_allpixyears, axis=0)
-sos = np.stack(sos_allpixyears, axis=0)
+cu   = np.stack(cu_allpixyears,   axis=0)
+sos  = np.stack(sos_allpixyears,  axis=0)
 
 print('tavg', tavg.shape)
 print('dayl', dayl.shape)
 print('cu', cu.shape)
+
 ##########################################
 # Move data to GPU
 ##########################################
 
 # Tensors are organized as:
-# dim1 - days
-# dim2 - models
-# dim3 - samples (pixel-years)
+# dim0 - days
+# dim1 - models
+# dim2 - samples (pixel-years)
 with torch.device(device):
   tavg = torch.tensor(tavg.transpose(1,0,2), dtype=dtype)
   dayl = torch.tensor(dayl.transpose(1,0,2), dtype=dtype)
-  cu = torch.tensor(cu.transpose(1,0,2), dtype=dtype)
-  sos = torch.tensor(sos.transpose(1,0,2), dtype=dtype)
+  cu   = torch.tensor(cu.transpose(1,0,2),   dtype=dtype)
+  sos  = torch.tensor(sos.transpose(1,0,2),  dtype=dtype)
 
 with torch.device(device):
-  b_tavg = torch.full((1,total_models,1), 1, requires_grad=True, dtype=dtype)
-  b_dayl = torch.full((1,total_models,1), 1, requires_grad=True, dtype=dtype)
-  b_cu = torch.full((1,total_models,1), 0.1, requires_grad=True, dtype=dtype)
-  kappa = torch.full((1,total_models,1), -8, requires_grad=True, dtype=dtype)
-  lam = torch.full((1,total_models,1), 0.1, requires_grad=True, dtype=dtype)
+  b_tavg = torch.full((1,total_models,1), 1,    requires_grad=True, dtype=dtype)
+  b_dayl = torch.full((1,total_models,1), 1,    requires_grad=True, dtype=dtype)
+  b_cu   = torch.full((1,total_models,1), 0.1,  requires_grad=True, dtype=dtype)
+  kappa  = torch.full((1,total_models,1), -8,   requires_grad=True, dtype=dtype)
+  lam    = torch.full((1,total_models,1), 0.1,  requires_grad=True, dtype=dtype)
 
 
 ##########################################
@@ -302,7 +292,7 @@ class EarlyStopper:
             if self.counter >= self.patience:
                 return True
         return False
-    
+
 print("Starting model fitting")
 with torch.device(device):
   report_freq = 5
@@ -362,25 +352,25 @@ for i in range(output_x):
 # contains all pixels, even if a model wasn't fit for all of them.
 b_tavg_save = torch.full((1, output_models, 1), np.nan, dtype=dtype, device='cpu')
 b_dayl_save = torch.full((1, output_models, 1), np.nan, dtype=dtype, device='cpu')
-b_cu_save = torch.full((1, output_models, 1), np.nan, dtype=dtype, device='cpu')
-kappa_save = torch.full((1, output_models, 1), np.nan, dtype=dtype, device='cpu')
-lam_save = torch.full((1, output_models, 1), np.nan, dtype=dtype, device='cpu')
+b_cu_save   = torch.full((1, output_models, 1), np.nan, dtype=dtype, device='cpu')
+kappa_save  = torch.full((1, output_models, 1), np.nan, dtype=dtype, device='cpu')
+lam_save    = torch.full((1, output_models, 1), np.nan, dtype=dtype, device='cpu')
 b_tavg_save.scatter_(1, torch.tensor(index).reshape(1,-1,1), b_tavg.detach().cpu())
 b_dayl_save.scatter_(1, torch.tensor(index).reshape(1,-1,1), b_dayl.detach().cpu())
-b_cu_save.scatter_(1, torch.tensor(index).reshape(1,-1,1), b_cu.detach().cpu())
-kappa_save.scatter_(1, torch.tensor(index).reshape(1,-1,1), kappa.detach().cpu())
-lam_save.scatter_(1, torch.tensor(index).reshape(1,-1,1), lam.detach().cpu())
+b_cu_save.scatter_(1,   torch.tensor(index).reshape(1,-1,1), b_cu.detach().cpu())
+kappa_save.scatter_(1,  torch.tensor(index).reshape(1,-1,1), kappa.detach().cpu())
+lam_save.scatter_(1,    torch.tensor(index).reshape(1,-1,1), lam.detach().cpu())
 
 # Reshape and concatenate output arrays
 b_tavg_save = b_tavg_save.reshape(1, output_x, output_y)
 b_dayl_save = b_dayl_save.reshape(1, output_x, output_y)
-b_cu_save = b_cu_save.reshape(1, output_x, output_y)
-kappa_save = kappa_save.reshape(1, output_x, output_y)
-lam_save = lam_save.reshape(1, output_x, output_y)
+b_cu_save   = b_cu_save.reshape(1, output_x, output_y)
+kappa_save  = kappa_save.reshape(1, output_x, output_y)
+lam_save    = lam_save.reshape(1, output_x, output_y)
 output = torch.cat((b_tavg_save, b_dayl_save, b_cu_save, kappa_save, lam_save), axis=0)
 output = output.detach().numpy()
 
-with rio.open(f'/lustre/scratch5/cscholl/modis/{year}_01_01.tif',
+with rio.open(f'/lustre/scratch5/cscholl/modis/2001_01_01.tif',
                 boundless=True,
                 window=window) as src:
   profile = src.profile
@@ -397,10 +387,8 @@ profile['height'] = output.shape[1]
 profile['width'] = output.shape[2]
 profile['dtype'] = output.dtype
 
-x = 'test'
-y = 'test'
 # Save results
 with rio.Env():
-    with rio.open(f'/lustre/scratch5/cscholl/pheno_params/pheno_params_{args.window}.tif', 
+    with rio.open(f'/lustre/scratch5/cscholl/pheno_params/pheno_params_{args.window}.tif',
                   'w', **profile) as dst:
         dst.write(output)

@@ -51,7 +51,7 @@ phenology = (ee.ImageCollection('MODIS/061/MCD12Q2')
                 .map(correct_sos))
 
 # Create the folder if it doesn't exist
-output_folder = './Test'
+output_folder = '../data/modis/'
 if not os.path.exists(output_folder):
     os.makedirs(output_folder)
 out_dir = os.path.join(os.getcwd(), output_folder)

@@ -6,8 +6,8 @@ import geemap
 ee.Authenticate()
 ee.Initialize(project="ee-cjc378")
 
-start_date = '2020-01-01'
-end_date = '2026-01-01'
+start_date = '2009-11-01'
+end_date = '2011-01-01'
 
 # Get region to be downloaded (either specify or create with job arrays)
 region = ee.Geometry.Polygon(
