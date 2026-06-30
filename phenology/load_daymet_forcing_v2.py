@@ -72,9 +72,15 @@ def list_daily_daymet_files(daymet_dir: str, year: int) -> List[str]:
         date = datetime(int(basename[0:4]), int(basename[4:6]), int(basename[6:8]))
         return date.timetuple().tm_yday >= 335 # check if date is in last 31 days of the year
     files_prior = list(filter(last_31_days, files_prior))
+    print('Previous year: ', len(files_prior))
 
     pattern_current = os.path.join(daymet_dir, f"{year}0*.tif")
     files_current = sorted(glob.glob(pattern_current))
+    def first_273_days(filename: str) -> bool:
+        basename = os.path.basename(filename)
+        date = datetime(int(basename[0:4]), int(basename[4:6]), int(basename[6:8]))
+        return  date.timetuple().tm_yday <= 273
+    files_current = list(filter(first_273_days, files_current))
 
     files = files_prior + files_current
     if not files:
@@ -127,11 +133,15 @@ def get_target_grid(
             width = img.width
             transform = img.transform
         else:
-            height = int(window.height)
-            width = int(window.width)
+            height = window.height
+            width = window.width
             transform = img.window_transform(window)
+<<<<<<< HEAD
         print(transform)
         print(window)
+=======
+        
+>>>>>>> bbbcd824a09ded3872de5f65736504420c498028
         profile = {
             "crs": img.crs,
             "transform": transform,
@@ -143,13 +153,14 @@ def get_target_grid(
 
 def read_dataset(
     path: str,
-    dst_profile: dict
+    dst_profile: dict,
+    bands: list
 ) -> np.ndarray:
     """Read Daymet tmax/tmin/dayl with source window based on a destination
     profile.
 
     Returns:
-      data: A numpy array with shape (3, rows, cols) containing data from the raster
+      data: A numpy array with shape (len(bands), rows, cols) containing data from the raster
         at `daymet_path`.
       src_profile: The profile of the source raster with transform updated to
         reflect the updated extent.
@@ -169,6 +180,7 @@ def read_dataset(
         src_window = from_bounds(*src_bounds, transform=src.transform)
 
         data = src.read(
+            indexes=bands,
             window=src_window,
             boundless=True,
         )
@@ -230,19 +242,20 @@ def load_year_forcing(
     if cmip6_dir != "":
         cmip6_files = list_daily_cmip6_files(cmip6_dir, year+86)
     dst_profile = get_target_grid(imagery_path, window)
-    print('Reading using transform: ', dst_profile)
     dest_days: List[np.ndarray] = []
     for daymet_path in daymet_files:
         daymet_data, daymet_profile = read_dataset(
             path=daymet_path,
-            dst_profile=dst_profile
+            dst_profile=dst_profile,
+            bands=[1,2,5]
         )
         # If CMIP6 data is provided reproject it to align with Daymet data,
         # and add the temperature deltas to the Daymet tmax/tmin bands.
         if cmip6_dir != "":
             cmip6_data, cmip6_profile = read_dataset(
                 path=cmip6_dir,
-                dst_profile=daymet_profile
+                dst_profile=daymet_profile,
+                bands=[1,2,3]
             )
             cmip6_data = reproject_raster(
                 src=cmip6_data,
