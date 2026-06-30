@@ -4,6 +4,7 @@
 
 import argparse
 import json
+import sys
 
 import numpy as np
 import rasterio as rio
@@ -55,8 +56,7 @@ args = parser.parse_args()
 # Device to run optimizing code
 device = args.device
 if device == 'cuda':
-    pass
-    #assert torch.cuda.is_available(), "CUDA resources not available when cuda device specified."
+    assert torch.cuda.is_available(), "CUDA resources not available when cuda device specified."
 
 # Dtype of data
 if (args.dtype == 'float32'):
@@ -95,6 +95,9 @@ for year in range(2001, 2001 + num_years):
     landcover = src.read(1, window=window, boundless=True)
     landcovers.append(landcover)
 landcovers = np.stack(landcovers, axis=0)
+if np.all(landcovers == 0):
+    print("No models to fit in this region")
+    sys.exit()
 
 output_x = landcovers.shape[1]//10
 output_y = landcovers.shape[2]//10
@@ -155,7 +158,7 @@ print("Loading forcings and sampling")
 # Accumulate per-pixel forcing lists, keyed by (i,j).
 # Each entry holds one array per year that had samples for that pixel.
 pixel_data = {
-    (i, j): {'tavg': [], 'dayl': [], 'cu': [], 'sos': []}
+    f"{i}_{j}": {'tavg': [], 'dayl': [], 'cu': [], 'sos': []}
     for i in range(output_x) for j in range(output_y)
     if (i, j) not in skipped
 }
@@ -227,6 +230,12 @@ tavg = np.stack(tavg_allpixyears, axis=0)  # (n_models, days, n_samples)
 dayl = np.stack(dayl_allpixyears, axis=0)
 cu   = np.stack(cu_allpixyears,   axis=0)
 sos  = np.stack(sos_allpixyears,  axis=0)
+
+# If one of these are nan from the start, report as error
+if (np.any(np.isnan(tavg)) | np.any(np.isnan(dayl)) |
+    np.any(np.isnan(cu)) | np.any(np.isnan(sos))):
+    print('Found nan forcings')
+    sys.exit(1)
 
 print('tavg', tavg.shape)
 print('dayl', dayl.shape)
@@ -326,6 +335,8 @@ with torch.device(device):
 
   for epoch in range(num_epochs):
       loss = closure()
+      if torch.any(torch.isnan(loss)):
+          print("Encountered NaN loss")
       if es.early_stop(loss.item()):
         print('Early stopping')
         break
