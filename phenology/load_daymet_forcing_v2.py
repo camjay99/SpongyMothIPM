@@ -130,7 +130,8 @@ def get_target_grid(
             height = int(window.height)
             width = int(window.width)
             transform = img.window_transform(window)
-
+        print(transform)
+        print(window)
         profile = {
             "crs": img.crs,
             "transform": transform,

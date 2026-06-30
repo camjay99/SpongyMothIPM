@@ -7,7 +7,7 @@ import pytest
 import rasterio as rio
 from rasterio.transform import from_origin
 
-from load_daymet_forcing import (
+from load_daymet_forcing_v2 import (
     get_target_grid,
     list_daily_cmip6_files,
     list_daily_daymet_files,
