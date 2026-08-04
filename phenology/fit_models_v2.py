@@ -324,6 +324,9 @@ with torch.device(device):
     loss = torch.sum((pred - sos)**2)
     loss.backward()
 
+    if torch.any(torch.isnan(loss)):
+        print("Encountered NaN loss")
+
     # Replace nan grads so fitting may continue
     b_tavg.grad[torch.isnan(b_tavg.grad)] = 0
     b_dayl.grad[torch.isnan(b_dayl.grad)] = 0
@@ -333,16 +336,17 @@ with torch.device(device):
 
     return loss
 
-  for epoch in range(num_epochs):
+  print(f"Initial Loss: {closure():.4f}")
+  for epoch in range(1, num_epochs+1):
+      optimizer.step(closure)
       loss = closure()
       if torch.any(torch.isnan(loss)):
-          print("Encountered NaN loss")
+          print(f"Encountered NaN loss: Epoch {epoch}")
       if es.early_stop(loss.item()):
         print('Early stopping')
         break
       if epoch % report_freq == 0:
-        print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {loss:.4f}')
-      optimizer.step(closure)
+        print(f'Epoch [{epoch}/{num_epochs}], Loss: {loss:.4f}')
 
 
 ##########################################
