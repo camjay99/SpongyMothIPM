@@ -327,6 +327,9 @@ with torch.device(device):
     loss = torch.sum((pred - sos)**2)
     loss.backward()
 
+    if torch.any(torch.isnan(loss)):
+        print("Encountered NaN loss")
+
     # Replace nan grads so fitting may continue
     b_tavg.grad[torch.isnan(b_tavg.grad)] = 0
     b_dayl.grad[torch.isnan(b_dayl.grad)] = 0
@@ -337,6 +340,7 @@ with torch.device(device):
     return loss
   retry = 3
   while retry > 0:
+    print(f"Initial Loss: {closure():.4f}")
     for epoch in range(num_epochs):
         try:
             loss = closure()
@@ -362,8 +366,6 @@ with torch.device(device):
   if retry == 0:
     print("Failed to fit model after multiple retries. Exiting.")
     sys.exit(1)
-
-
 
 ##########################################
 # Save Training Output
