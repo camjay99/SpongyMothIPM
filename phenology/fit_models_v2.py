@@ -255,12 +255,15 @@ with torch.device(device):
   cu   = torch.tensor(cu.transpose(1,0,2),   dtype=dtype)
   sos  = torch.tensor(sos.transpose(1,0,2),  dtype=dtype)
 
-with torch.device(device):
-  b_tavg = torch.full((1,total_models,1), 1,    requires_grad=True, dtype=dtype)
-  b_dayl = torch.full((1,total_models,1), 1,    requires_grad=True, dtype=dtype)
-  b_cu   = torch.full((1,total_models,1), 0.1,  requires_grad=True, dtype=dtype)
-  kappa  = torch.full((1,total_models,1), -8,   requires_grad=True, dtype=dtype)
-  lam    = torch.full((1,total_models,1), 0.1,  requires_grad=True, dtype=dtype)
+def random_init_params(total_models, device, dtype):
+    with torch.device(device):
+        b_tavg = torch.randn((1,total_models,1), requires_grad=True, dtype=dtype)*0.1 + 0.95
+        b_dayl = torch.randn((1,total_models,1), requires_grad=True, dtype=dtype)*0.1 + 0.95
+        b_cu   = torch.randn((1,total_models,1), requires_grad=True, dtype=dtype)*0.01 + 0.095
+        kappa  = torch.randn((1,total_models,1), requires_grad=True, dtype=dtype)*0.5 - 8
+        lam    = torch.randn((1,total_models,1), requires_grad=True, dtype=dtype)*0.01 - 0.095
+    return b_tavg, b_dayl, b_cu, kappa, lam
+b_tavg, b_dayl, b_cu, kappa, lam = random_init_params(total_models, device, dtype)
 
 
 ##########################################
@@ -332,17 +335,34 @@ with torch.device(device):
     lam.grad[torch.isnan(lam.grad)] = 0
 
     return loss
+  retry = 3
+  while retry > 0:
+    for epoch in range(num_epochs):
+        try:
+            loss = closure()
+        except:
+            print("Encountered error during optimization, retrying with new random initialization.")
+            retry -= 1
+            b_tavg, b_dayl, b_cu, kappa, lam = random_init_params(total_models, device, dtype)
+            break
 
-  for epoch in range(num_epochs):
-      loss = closure()
-      if torch.any(torch.isnan(loss)):
-          print("Encountered NaN loss")
-      if es.early_stop(loss.item()):
-        print('Early stopping')
-        break
-      if epoch % report_freq == 0:
-        print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {loss:.4f}')
-      optimizer.step(closure)
+        if torch.any(torch.isnan(loss)):
+            print("Encountered NaN loss, retrying with new random initialization.")
+            retry -= 1
+            b_tavg, b_dayl, b_cu, kappa, lam = random_init_params(total_models, device, dtype)
+            break
+
+        if es.early_stop(loss.item()):
+            print('Early stopping')
+            break
+        
+        if epoch % report_freq == 0:
+            print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {loss:.4f}')
+        optimizer.step(closure)
+  if retry == 0:
+    print("Failed to fit model after multiple retries. Exiting.")
+    sys.exit(1)
+
 
 
 ##########################################
