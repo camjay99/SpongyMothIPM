@@ -36,12 +36,12 @@ region = ee.Geometry.Polygon(
 daymet = (ee.ImageCollection("NASA/ORNL/DAYMET_V4")
             .filterBounds(region)
             .filterDate(start_date, end_date)
-            .filter(ee.Filter.calendarRange(12, 9, 'month'))
+            .filter(ee.Filter.dayOfYear(335, 273))
             .select(['tmax', 'tmin', 'dayl']))
 
 def shrink(image):
     temps = image.select(['tmax', 'tmin']).subtract(-60).divide(120).multiply(65535).uint16()
-    dayl = image.uint16()
+    dayl = image.select(['dayl']).uint16()
     return ee.Image([temps, dayl])
 
 daymet = daymet.map(shrink)
