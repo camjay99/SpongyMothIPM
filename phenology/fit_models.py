@@ -238,6 +238,11 @@ dayl = np.stack(dayl_allpixyears, axis=0)
 cu = np.stack(cu_allpixyears, axis=0)
 sos = np.stack(sos_allpixyears, axis=0)
 
+# Rescale tavg, dayl, and cu for numerical stability.
+tavg = (tavg - tavg.mean(dim=(0,2))) / tavg.std(dim=(0,2))
+dayl = (dayl - dayl.mean(dim=(0,2))) / dayl.std(dim=(0,2))
+cu = (cu - cu.mean(dim=(0,2))) / cu.std(dim=(0,2))
+
 print('tavg', tavg.shape)
 print('dayl', dayl.shape)
 print('cu', cu.shape)
