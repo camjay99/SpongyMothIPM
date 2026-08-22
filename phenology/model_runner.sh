@@ -15,7 +15,7 @@ source "/usr/projects/hpcsoft/common/x86_64/anaconda/2023.03-python-3.10/etc/pro
 conda activate model_fitting
 
 srun --exclusive -n 1 --output=output_%j_0 python -u fit_models_v2.py --device=cuda -H 200 -W 200 -n 15 -e 5000 &
-srun --exclusive -n 1 --output=output_%j_1 python -u fit_models_v2.py --device=cuda -H 200 -W 200 -n 120 -e 5000 &
-srun --exclusive -n 1 --output=output_%j_2 python -u fit_models_v2.py --device=cuda -H 200 -W 200 -n 50 -e 5000 &
-srun --exclusive -n 1 --output=output_%j_3 python -u fit_models_v2.py --device=cuda -H 200 -W 200 -n 80 -e 5000 &
+srun --exclusive -n 1 --output=output_%j_1 python -u fit_models_v2.py --device=cuda -H 200 -W 200 -n 100 -e 5000 &
+srun --exclusive -n 1 --output=output_%j_2 python -u fit_models_v2.py --device=cuda -H 200 -W 200 -n 200 -e 5000 &
+srun --exclusive -n 1 --output=output_%j_3 python -u fit_models_v2.py --device=cuda -H 200 -W 200 -n 180 -e 5000 &
 wait

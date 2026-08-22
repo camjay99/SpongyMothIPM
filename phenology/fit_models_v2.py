@@ -81,7 +81,7 @@ windows = load_daymet_forcing_v2.create_window_grid(
    '/lustre/scratch5/cscholl/modis/2001_01_01.tif', args.height, args.width)
 print('Number of windows: ', len(windows))
 window = windows[args.window]
-print('Using window: ', window)
+print('Using window: ', args.window, window)
 
 ##################################
 # Determine pixel-year samples
@@ -257,11 +257,11 @@ with torch.device(device):
 
 def random_init_params(total_models, device, dtype):
     with torch.device(device):
-        b_tavg = torch.randn((1,total_models,1), requires_grad=True, dtype=dtype)*0.1 + 0.95
-        b_dayl = torch.randn((1,total_models,1), requires_grad=True, dtype=dtype)*0.1 + 0.95
-        b_cu   = torch.randn((1,total_models,1), requires_grad=True, dtype=dtype)*0.01 + 0.095
-        kappa  = torch.randn((1,total_models,1), requires_grad=True, dtype=dtype)*0.5 - 8
-        lam    = torch.randn((1,total_models,1), requires_grad=True, dtype=dtype)*0.01 - 0.095
+        b_tavg = (torch.rand((1,total_models,1), dtype=dtype)*0.1 + 0.95).requires_grad_()
+        b_dayl = (torch.rand((1,total_models,1), dtype=dtype)*0.1 + 0.95).requires_grad_()
+        b_cu   = (torch.rand((1,total_models,1), dtype=dtype)*0.01 + 0.095).requires_grad_()
+        kappa  = (torch.rand((1,total_models,1), dtype=dtype)*0.1 - 8.05).requires_grad_()
+        lam    = (torch.rand((1,total_models,1), dtype=dtype)*0.01 - 0.095).requires_grad_()
     return b_tavg, b_dayl, b_cu, kappa, lam
 b_tavg, b_dayl, b_cu, kappa, lam = random_init_params(total_models, device, dtype)
 
@@ -309,16 +309,17 @@ class EarlyStopper:
 print("Starting model fitting")
 with torch.device(device):
   report_freq = 5
-  optimizer = torch.optim.LBFGS([b_tavg, b_dayl, b_cu, kappa, lam], lr=1,
-                                history_size=200, max_iter=20, line_search_fn='strong_wolfe')
-  es = EarlyStopper(patience=3, min_delta=0.001)
+  #optimizer = torch.optim.LBFGS([b_tavg, b_dayl, b_cu, kappa, lam], lr=1,
+  #                              history_size=400, max_iter=20, line_search_fn='strong_wolfe')
+  es = EarlyStopper(patience=10, min_delta=0.001)
   # Closure capturing forward/backward passes is required for LBFGS optimization
-  def closure():
-    b_tavg.grad = None
-    b_dayl.grad = None
-    b_cu.grad = None
-    kappa.grad = None
-    lam.grad = None
+  def closure(optimizer):
+    # b_tavg.grad = None
+    # b_dayl.grad = None
+    # b_cu.grad = None
+    # kappa.grad = None
+    # lam.grad = None
+    optimizer.zero_grad()
 
     pred = make_prediction(tavg, dayl, cu, b_tavg, b_dayl, b_cu, lam, kappa)
 
@@ -339,11 +340,15 @@ with torch.device(device):
 
     return loss
   retry = 3
-  while retry > 0:
-    print(f"Initial Loss: {closure():.4f}")
+  fit = False
+  while retry > 0 and not fit:
+    optimizer = torch.optim.LBFGS([b_tavg, b_dayl, b_cu, kappa, lam], lr=2,
+                                  history_size=200, max_iter=20, line_search_fn='strong_wolfe')
+    print(f"Initial Loss: {closure(optimizer):.4f}")
     for epoch in range(num_epochs):
         try:
-            loss = closure()
+            loss = closure(optimizer)
+            optimizer.step(lambda : closure(optimizer))
         except:
             print("Encountered error during optimization, retrying with new random initialization.")
             retry -= 1
@@ -358,11 +363,13 @@ with torch.device(device):
 
         if es.early_stop(loss.item()):
             print('Early stopping')
+            fit = True
             break
         
         if epoch % report_freq == 0:
             print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {loss:.4f}')
-        optimizer.step(closure)
+    if epoch == num_epochs-1:
+        fit = True
   if retry == 0:
     print("Failed to fit model after multiple retries. Exiting.")
     sys.exit(1)
