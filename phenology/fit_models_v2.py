@@ -317,7 +317,7 @@ with torch.device(device):
   #                              history_size=400, max_iter=20, line_search_fn='strong_wolfe')
   es = EarlyStopper(patience=10, min_delta=0.001)
   # Closure capturing forward/backward passes is required for LBFGS optimization
-  def closure(optimizer):
+  def training_run(optimizer):
     # b_tavg.grad = None
     # b_dayl.grad = None
     # b_cu.grad = None
@@ -346,13 +346,21 @@ with torch.device(device):
   retry = 3
   fit = False
   while retry > 0 and not fit:
-    optimizer = torch.optim.LBFGS([b_tavg, b_dayl, b_cu, kappa, lam], lr=2,
+    # Run a course pass with Adam optimizer to find a good starting point for L-BFGS optimization
+    opt_adam = torch.optim.Adam([b_tavg, b_dayl, b_cu, kappa, lam], lr=0.01)
+    for epoch in range(100):
+        loss = training_run(opt_adam)
+        opt_adam.step()
+        if epoch % report_freq == 0:
+            print(f'Adam Epoch [{epoch+1}/100, Loss: {loss:.4f}')
+
+    opt_lbgfs = torch.optim.LBFGS([b_tavg, b_dayl, b_cu, kappa, lam], lr=2,
                                   history_size=200, max_iter=20, line_search_fn='strong_wolfe')
-    print(f"Initial Loss: {closure(optimizer):.4f}")
+    print(f"Initial Loss: {training_run(opt_lbgfs):.4f}")
     for epoch in range(num_epochs):
         try:
-            loss = closure(optimizer)
-            optimizer.step(lambda : closure(optimizer))
+            loss = training_run(opt_lbgfs)
+            opt_lbgfs.step(lambda : training_run(opt_lbgfs))
         except:
             print("Encountered error during optimization, retrying with new random initialization.")
             retry -= 1
@@ -371,7 +379,7 @@ with torch.device(device):
             break
         
         if epoch % report_freq == 0:
-            print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {loss:.4f}')
+            print(f'L-BFGS Epoch [{epoch+1}/{num_epochs}], Loss: {loss:.4f}')
     if epoch == num_epochs-1:
         fit = True
   if retry == 0:
