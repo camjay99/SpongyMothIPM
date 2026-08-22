@@ -237,6 +237,10 @@ if (np.any(np.isnan(tavg)) | np.any(np.isnan(dayl)) |
     print('Found nan forcings')
     sys.exit(1)
 
+tavg = (tavg - tavg.mean(axis=(0,2),keepdims=True)) / tavg.std(axis=(0,2),keepdims=True)
+dayl = (dayl - dayl.mean(axis=(0,2),keepdims=True)) / dayl.std(axis=(0,2),keepdims=True)
+cu = (cu - cu.min(axis=(0,2),keepdims=True)) / (cu.max(axis=(0,2),keepdims=True) - cu.min(axis=(0,2),keepdims=True))
+
 print('tavg', tavg.shape)
 print('dayl', dayl.shape)
 print('cu', cu.shape)
