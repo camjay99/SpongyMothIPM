@@ -348,11 +348,18 @@ with torch.device(device):
   while retry > 0 and not fit:
     # Run a course pass with Adam optimizer to find a good starting point for L-BFGS optimization
     opt_adam = torch.optim.Adam([b_tavg, b_dayl, b_cu, kappa, lam], lr=0.01)
-    for epoch in range(100):
-        loss = training_run(opt_adam)
-        opt_adam.step()
+    for epoch in range(500):
+        try:
+            loss = training_run(opt_adam)
+            opt_adam.step()
+        except:
+            print("Encountered error during Adam optimization, retrying with new random initialization.")
+            retry -= 1
+            b_tavg, b_dayl, b_cu, kappa, lam = random_init_params(total_models, device, dtype)
+            break
+
         if epoch % report_freq == 0:
-            print(f'Adam Epoch [{epoch+1}/100, Loss: {loss:.4f}')
+            print(f'Adam Epoch [{epoch+1}/500], Loss: {loss:.4f}')
 
     opt_lbgfs = torch.optim.LBFGS([b_tavg, b_dayl, b_cu, kappa, lam], lr=2,
                                   history_size=200, max_iter=20, line_search_fn='strong_wolfe')
@@ -362,7 +369,7 @@ with torch.device(device):
             loss = training_run(opt_lbgfs)
             opt_lbgfs.step(lambda : training_run(opt_lbgfs))
         except:
-            print("Encountered error during optimization, retrying with new random initialization.")
+            print("Encountered error during L-BFGS optimization, retrying with new random initialization.")
             retry -= 1
             b_tavg, b_dayl, b_cu, kappa, lam = random_init_params(total_models, device, dtype)
             break
