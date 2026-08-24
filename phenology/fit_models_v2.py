@@ -346,49 +346,42 @@ with torch.device(device):
   retry = 3
   fit = False
   while retry > 0 and not fit:
-    # Run a course pass with Adam optimizer to find a good starting point for L-BFGS optimization
-    opt_adam = torch.optim.Adam([b_tavg, b_dayl, b_cu, kappa, lam], lr=0.01)
-    for epoch in range(500):
-        try:
+    try:
+        # Run a course pass with Adam optimizer to find a good starting point for L-BFGS optimization
+        opt_adam = torch.optim.Adam([b_tavg, b_dayl, b_cu, kappa, lam], lr=0.01)
+        for epoch in range(500):
             loss = training_run(opt_adam)
             opt_adam.step()
-        except:
-            print("Encountered error during Adam optimization, retrying with new random initialization.")
-            retry -= 1
-            b_tavg, b_dayl, b_cu, kappa, lam = random_init_params(total_models, device, dtype)
-            break
 
-        if epoch % report_freq == 0:
-            print(f'Adam Epoch [{epoch+1}/500], Loss: {loss:.4f}')
+            if epoch % report_freq == 0:
+                print(f'Adam Epoch [{epoch+1}/500], Loss: {loss:.4f}')
 
-    opt_lbgfs = torch.optim.LBFGS([b_tavg, b_dayl, b_cu, kappa, lam], lr=2,
-                                  history_size=200, max_iter=20, line_search_fn='strong_wolfe')
-    print(f"Initial Loss: {training_run(opt_lbgfs):.4f}")
-    for epoch in range(num_epochs):
-        try:
+        opt_lbgfs = torch.optim.LBFGS([b_tavg, b_dayl, b_cu, kappa, lam], lr=2,
+                                    history_size=200, max_iter=20, line_search_fn='strong_wolfe')
+        print(f"Initial Loss: {training_run(opt_lbgfs):.4f}")
+        for epoch in range(num_epochs):
             loss = training_run(opt_lbgfs)
             opt_lbgfs.step(lambda : training_run(opt_lbgfs))
-        except:
-            print("Encountered error during L-BFGS optimization, retrying with new random initialization.")
-            retry -= 1
-            b_tavg, b_dayl, b_cu, kappa, lam = random_init_params(total_models, device, dtype)
-            break
 
-        if torch.any(torch.isnan(loss)):
-            print("Encountered NaN loss, retrying with new random initialization.")
-            retry -= 1
-            b_tavg, b_dayl, b_cu, kappa, lam = random_init_params(total_models, device, dtype)
-            break
+            if torch.any(torch.isnan(loss)):
+                print("Encountered NaN loss, retrying with new random initialization.")
+                retry -= 1
+                b_tavg, b_dayl, b_cu, kappa, lam = random_init_params(total_models, device, dtype)
+                break
 
-        if es.early_stop(loss.item()):
-            print('Early stopping')
+            if es.early_stop(loss.item()):
+                print('Early stopping')
+                fit = True
+                break
+            
+            if epoch % report_freq == 0:
+                print(f'L-BFGS Epoch [{epoch+1}/{num_epochs}], Loss: {loss:.4f}')
+        if epoch == num_epochs-1:
             fit = True
-            break
-        
-        if epoch % report_freq == 0:
-            print(f'L-BFGS Epoch [{epoch+1}/{num_epochs}], Loss: {loss:.4f}')
-    if epoch == num_epochs-1:
-        fit = True
+    except:
+        print("Encountered error during optimization, retrying with new random initialization.")
+        retry -= 1
+        b_tavg, b_dayl, b_cu, kappa, lam = random_init_params(total_models, device, dtype)
   if retry == 0:
     print("Failed to fit model after multiple retries. Exiting.")
     sys.exit(1)
