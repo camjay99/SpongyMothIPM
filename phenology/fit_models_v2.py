@@ -316,7 +316,7 @@ with torch.device(device):
   report_freq = 5
   #optimizer = torch.optim.LBFGS([b_tavg, b_dayl, b_cu, kappa, lam], lr=1,
   #                              history_size=400, max_iter=20, line_search_fn='strong_wolfe')
-  es = EarlyStopper(patience=10, min_delta=0.001)
+  es = EarlyStopper(patience=10, min_delta=10)
   # Closure capturing forward/backward passes is required for LBFGS optimization
   def training_run(optimizer):
     # b_tavg.grad = None
@@ -350,12 +350,16 @@ with torch.device(device):
     try:
         # Run a course pass with Adam optimizer to find a good starting point for L-BFGS optimization
         opt_adam = torch.optim.Adam([b_tavg, b_dayl, b_cu, kappa, lam], lr=0.01)
-        for epoch in range(5000):
+        for epoch in range(10000):
             loss = training_run(opt_adam)
             opt_adam.step()
 
             if epoch % 50 == 0:
                 print(f'Adam Epoch [{epoch+1}/5000], Loss: {loss:.4f}')
+
+            if es.early_stop(loss.item()):
+                print('Early stopping Adam pretraining')
+                break
 
         opt_lbgfs = torch.optim.LBFGS([b_tavg, b_dayl, b_cu, kappa, lam], lr=2,
                                     history_size=200, max_iter=20, line_search_fn='strong_wolfe')
