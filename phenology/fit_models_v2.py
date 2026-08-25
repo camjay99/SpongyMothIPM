@@ -240,6 +240,7 @@ if (np.any(np.isnan(tavg)) | np.any(np.isnan(dayl)) |
 tavg = (tavg - tavg.mean(axis=(0,2),keepdims=True)) / tavg.std(axis=(0,2),keepdims=True)
 dayl = (dayl - dayl.mean(axis=(0,2),keepdims=True)) / dayl.std(axis=(0,2),keepdims=True)
 cu = (cu - cu.min(axis=(0,2),keepdims=True)) / (cu.max(axis=(0,2),keepdims=True) - cu.min(axis=(0,2),keepdims=True))
+cu = np.where(np.isnan(cu), 0, cu) # If cu doesn't change, it can be set to 0 without affecting model fitting.
 
 print('tavg', tavg.shape)
 print('dayl', dayl.shape)
@@ -333,7 +334,7 @@ with torch.device(device):
     loss.backward()
 
     if torch.any(torch.isnan(loss)):
-        print("Encountered NaN loss")
+        raise Exception("Encountered NaN loss")
 
     # Replace nan grads so fitting may continue
     b_tavg.grad[torch.isnan(b_tavg.grad)] = 0
@@ -349,12 +350,12 @@ with torch.device(device):
     try:
         # Run a course pass with Adam optimizer to find a good starting point for L-BFGS optimization
         opt_adam = torch.optim.Adam([b_tavg, b_dayl, b_cu, kappa, lam], lr=0.01)
-        for epoch in range(500):
+        for epoch in range(5000):
             loss = training_run(opt_adam)
             opt_adam.step()
 
-            if epoch % report_freq == 0:
-                print(f'Adam Epoch [{epoch+1}/500], Loss: {loss:.4f}')
+            if epoch % 50 == 0:
+                print(f'Adam Epoch [{epoch+1}/5000], Loss: {loss:.4f}')
 
         opt_lbgfs = torch.optim.LBFGS([b_tavg, b_dayl, b_cu, kappa, lam], lr=2,
                                     history_size=200, max_iter=20, line_search_fn='strong_wolfe')
