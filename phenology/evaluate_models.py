@@ -4,6 +4,7 @@
 
 import argparse
 import json
+import sys
 
 import numpy as np
 import rasterio as rio
@@ -11,7 +12,7 @@ from rasterio.plot import show
 from rasterio.windows import Window
 import torch
 
-import load_daymet_forcing
+import load_daymet_forcing_v2
 
 ########################################
 # Parse arguments for running on cluster
@@ -72,7 +73,7 @@ elif args.num_years > 24:
                      + "as data is only available from 2001 to 2024.")
 
 # Create list of windows to loop through for model evaluation. 
-windows = load_daymet_forcing.create_window_grid(
+windows = load_daymet_forcing_v2.create_window_grid(
    '/lustre/scratch5/cscholl/modis/2001_01_01.tif', args.height, args.width)
 print('Number of windows: ', len(windows))
 window = windows[args.window]
@@ -134,90 +135,90 @@ total_models = output_models - len(skipped)
 # Load and rearrange data for computations
 ##########################################
 
-print("Loading forcings")
-# Load all of the data frames in advance
-tavgs = []
-dayls = []
-cus = []
-soss = []
-for year in range(2001, 2001 + num_years):
-  tavg, dayl, cu = load_daymet_forcing.load_year_forcing(
-      year=year,
-      daymet_dir='/lustre/scratch5/cscholl/daymet',
-      imagery_path=f'/lustre/scratch5/cscholl/modis/{year}_01_01.tif',
-      chill_threshold=5.0,
-      window=window
-  )
-  tavgs.append(tavg)
-  dayls.append(dayl)
-  cus.append(cu)
-  with rio.open(f'/lustre/scratch5/cscholl/modis/{year}_01_01.tif') as src:
-    soss.append(src.read(boundless=True, window=window))
+pixel_data = {
+    f"{i}_{j}": {'tavg': [], 'dayl': [], 'cu': [], 'sos': []}
+    for i in range(output_x) for j in range(output_y)
+    if (i, j) not in skipped
+}
 
-print("Sampling forcings")
-# Create forcings arrays for all samples
+for year_idx, year in enumerate(range(2001, 2001 + num_years)):
+    print(f"Loading year {year}")
+    tavg_yr, dayl_yr, cu_yr = load_daymet_forcing_v2.load_year_forcing(
+        year=year,
+        daymet_dir='/lustre/scratch5/cscholl/daymet',
+        imagery_path=f'/lustre/scratch5/cscholl/modis/{year}_01_01.tif',
+        chill_threshold=5.0,
+        window=window
+    )
+    with rio.open(f'/lustre/scratch5/cscholl/modis/{year}_01_01.tif') as src:
+        sos_yr = src.read(boundless=True, window=window)
+
+    for i in range(output_x):
+        for j in range(output_y):
+            if (i, j) in skipped:
+                continue
+
+            # Filter sample indices to those belonging to this year
+            year_mask = samples[f"{i}_{j}"][0] == year_idx
+            if not year_mask.any():
+                continue
+
+            sample_rows = samples[f"{i}_{j}"][1][year_mask]
+            sample_cols = samples[f"{i}_{j}"][2][year_mask]
+            sample_rc = (sample_rows, sample_cols)
+
+            # Extract forcings for the sampled pixels within the 10x10 sub-tile
+            sl = (slice(None),)
+            tavg_sub = tavg_yr[:, 10*i:10*(i+1), 10*j:10*(j+1)]
+            dayl_sub = dayl_yr[:, 10*i:10*(i+1), 10*j:10*(j+1)]
+            cu_sub   = cu_yr[:,  10*i:10*(i+1), 10*j:10*(j+1)]
+            sos_sub  = sos_yr[:, 10*i:10*(i+1), 10*j:10*(j+1)]
+
+            tavg_pixyear = tavg_sub[sl + sample_rc]  # (days, n_samples)
+            dayl_pixyear = dayl_sub[sl + sample_rc]
+            cu_pixyear   = cu_sub[sl + sample_rc]
+
+            sos_vals = sos_sub[sl + sample_rc]  # (1, n_samples)
+            days = np.arange(tavg_pixyear.shape[0]).reshape(-1, 1)
+            sos_pixyear = (days >= sos_vals.reshape(1, -1)).astype(np.float32)
+
+            pixel_data[f"{i}_{j}"]['tavg'].append(tavg_pixyear)
+            pixel_data[f"{i}_{j}"]['dayl'].append(dayl_pixyear)
+            pixel_data[f"{i}_{j}"]['cu'].append(cu_pixyear)
+            pixel_data[f"{i}_{j}"]['sos'].append(sos_pixyear)
+
+# Assemble final arrays by concatenating year chunks per pixel, then stacking
+# across pixels. Shape after stack: (n_models, days, n_samples).
+print("Assembling forcing arrays")
 tavg_allpixyears = []
 dayl_allpixyears = []
-cu_allpixyears = []
-sos_allpixyears = []
-print(output_x)
-print(output_y)
-# For each sample, need to collect drivers + phenology for each year and accumulate
+cu_allpixyears   = []
+sos_allpixyears  = []
 for i in range(output_x):
-  for j in range(output_y):
-    # Skip if no samples
-    if (i,j) in skipped:
-      print(f'Skipping {i}, {j}')
-      continue
-    # Create forcings arrays for all years for this sample
-    tavg_pixel = []
-    dayl_pixel = []
-    cu_pixel = []
-    sos_pixel = []
-    # # Create window for loading data
-    # window = Window(j*10, i*10, 10, 10) # col/row but resulting array is row/col
-    # For each year, open data files and extract appropriate data
-    for k in range(num_years):
-      # Get all pixels for this year
-      sample_year = [s[samples[(i,j)][0] == k] for s in samples[(i,j)]]
-      tavg_year = tavgs[k][:, 10*i:10*(i+1),
-                         10*j:10*(j+1)]
-      dayl_year = dayls[k][:, 10*i:10*(i+1),
-                         10*j:10*(j+1)]
-      cu_year = cus[k][:, 10*i:10*(i+1),
-                     10*j:10*(j+1)]
-      sos_year = soss[k][:, 10*i:10*(i+1),
-                       10*j:10*(j+1)]
-      # Get forcing only for pixel-years to be sampled
-      tavg_pixyear = tavg_year[(slice(None),) + (sample_year[1], sample_year[2])]
-      dayl_pixyear = dayl_year[(slice(None),) + (sample_year[1], sample_year[2])]
-      cu_pixyear = cu_year[(slice(None),) + (sample_year[1], sample_year[2])]
-      # Create sos sample arrays, which are 1 if sos has been reached and 0 otherwise. This is done by comparing the day of year to the sos day of year for each pixel.
-      print(sos_year.shape)
-      sos_pixyear = np.arange(tavg_pixyear.shape[0]).reshape(-1, 1).repeat(tavg_pixyear.shape[1], 1)
-      sos_pixyear = sos_pixyear >= sos_year[(slice(None),) + (sample_year[1], sample_year[2])].reshape(1,-1)
-      # Pad with
-      # Save each pixel-year of data
-      print('Tavg shape', tavg_pixyear.shape)
-      tavg_pixel.append(tavg_pixyear)
-      dayl_pixel.append(dayl_pixyear)
-      cu_pixel.append(cu_pixyear)
-      sos_pixel.append(sos_pixyear)
-    # Combine all pixel-years into single data frame for the current pixel
-    tavg_pixel = np.concat(tavg_pixel, axis=1)
-    dayl_pixel = np.concat(dayl_pixel, axis=1)
-    cu_pixel = np.concat(cu_pixel, axis=1)
-    sos_pixel = np.concat(sos_pixel, axis=1)
-    # Add to list of all pixel-years for all pixels.
-    print('Tavg_pixel shape: ', tavg_pixel.shape)
-    tavg_allpixyears.append(tavg_pixel)
-    dayl_allpixyears.append(dayl_pixel)
-    cu_allpixyears.append(cu_pixel)
-    sos_allpixyears.append(sos_pixel)
-tavg = np.stack(tavg_allpixyears, axis=0)
+    for j in range(output_y):
+        if (i, j) in skipped:
+            continue
+        d = pixel_data[f"{i}_{j}"]
+        tavg_allpixyears.append(np.concatenate(d['tavg'], axis=1))
+        dayl_allpixyears.append(np.concatenate(d['dayl'], axis=1))
+        cu_allpixyears.append(np.concatenate(d['cu'],   axis=1))
+        sos_allpixyears.append(np.concatenate(d['sos'],  axis=1))
+
+tavg = np.stack(tavg_allpixyears, axis=0)  # (n_models, days, n_samples)
 dayl = np.stack(dayl_allpixyears, axis=0)
-cu = np.stack(cu_allpixyears, axis=0)
-sos = np.stack(sos_allpixyears, axis=0)
+cu   = np.stack(cu_allpixyears,   axis=0)
+sos  = np.stack(sos_allpixyears,  axis=0)
+
+# If one of these are nan from the start, report as error
+if (np.any(np.isnan(tavg)) | np.any(np.isnan(dayl)) |
+    np.any(np.isnan(cu)) | np.any(np.isnan(sos))):
+    print('Found nan forcings')
+    sys.exit(1)
+
+tavg = (tavg - tavg.mean(axis=(0,2),keepdims=True)) / tavg.std(axis=(0,2),keepdims=True)
+dayl = (dayl - dayl.mean(axis=(0,2),keepdims=True)) / dayl.std(axis=(0,2),keepdims=True)
+cu = (cu - cu.min(axis=(0,2),keepdims=True)) / (cu.max(axis=(0,2),keepdims=True) - cu.min(axis=(0,2),keepdims=True))
+cu = np.where(np.isnan(cu), 0, cu) # If cu doesn't change, it can be set to 0 without affecting model fitting.
 
 print('tavg', tavg.shape)
 print('dayl', dayl.shape)
