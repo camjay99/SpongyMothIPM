@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=1
 #SBATCH --gpus-per-task=1
 #SBATCH --time=03:00:00
-#SBATCH --output=output_%j
+#SBATCH --output=fit_output_%j
 #SBATCH --array=1-176
 
 cd $HOME/SpongyMothIPM/phenology

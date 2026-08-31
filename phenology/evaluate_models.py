@@ -24,7 +24,7 @@ parser = argparse.ArgumentParser(
 # Device to use for fitting. Options are "cpu" and "cuda". 
 # Note that using cuda requires a GPU with sufficient memory to 
 # hold the data and model parameters.
-parser.add_argument('--device', '-d', type=str, action='store_true')
+parser.add_argument('--device', '-d', type=str, action='store')
 
 # Dtype to use in fitting. Using float32 will reduce both memory usage and
 # precision. Using float64 will increase memory usage but may improve precision.
@@ -32,17 +32,17 @@ parser.add_argument('--dtype', '-t', type=str, action='store_true',
                     choices=['float32', 'float64'], default='float32')
 
 # Number of years to include in fitting. Years included will start at 2001.
-parser.add_argument('--num_years', '-y', type=int, action='store_true', 
+parser.add_argument('--num_years', '-y', type=int, action='store', 
                     default=24)
 
 # Width and height of windows in MODIS pixels. Should be a multiple of 10.
-parser.add_argument('--height', '-h', type=int, action='store_true',
+parser.add_argument('--height', '-h', type=int, action='store_',
                     default=100)
-parser.add_argument('--width', '-w', type=int, action='store_true',
+parser.add_argument('--width', '-w', type=int, action='store',
                     default=100)
 
 # Window number to evaluate model for. Should be less than total number of windows.
-parser.add_argument('--window', '-n', type=int, action='store_true',
+parser.add_argument('--window', '-n', type=int, action='store',
                     default=0)
 
 # Parse arguments provided to script
