@@ -28,7 +28,7 @@ parser.add_argument('--device', '-d', type=str, action='store')
 
 # Dtype to use in fitting. Using float32 will reduce both memory usage and
 # precision. Using float64 will increase memory usage but may improve precision.
-parser.add_argument('--dtype', '-t', type=str, action='store_true',
+parser.add_argument('--dtype', '-t', type=str, action='store',
                     choices=['float32', 'float64'], default='float32')
 
 # Number of years to include in fitting. Years included will start at 2001.
@@ -36,9 +36,9 @@ parser.add_argument('--num_years', '-y', type=int, action='store',
                     default=24)
 
 # Width and height of windows in MODIS pixels. Should be a multiple of 10.
-parser.add_argument('--height', '-h', type=int, action='store_',
+parser.add_argument('--height', '-H', type=int, action='store',
                     default=100)
-parser.add_argument('--width', '-w', type=int, action='store',
+parser.add_argument('--width', '-W', type=int, action='store',
                     default=100)
 
 # Window number to evaluate model for. Should be less than total number of windows.
@@ -99,7 +99,7 @@ output_models = output_x*output_y
 
 print("Creating evaluation samples")
 # Get samples used for model fitting.
-with open(f'../data/samples/{args.window}.json', 'r') as f:
+with open(f'/lustre/scratch5/cscholl/samples/{args.window}.json', 'r') as f:
     sample_choices = json.load(f)
 
 samples = {}
@@ -120,13 +120,13 @@ for i in range(output_x):
       skipped.append((i,j))
       continue
     # If less than 300 elements, all pixel-years are used for evaluation.
-    if sample_choices[(i,j)] == 'all':
-      samples[(i,j)] = nonzero
+    if sample_choices[f'{i}_{j}'] == 'all':
+      samples[f'{i}_{j}'] = nonzero
     else:
        # Invert the list of indices
        indices = list(set(range(nonzero[0].shape[0]))
-                        .difference(sample_choices[(i,j)]))
-       samples[(i,j)] = tuple(dim[indices] for dim in nonzero)
+                        .difference(sample_choices[f'{i}_{j}']))
+       samples[f'{i}_{j}'] = tuple(dim[indices] for dim in nonzero)
 
 total_models = output_models - len(skipped)
 
