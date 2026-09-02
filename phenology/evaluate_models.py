@@ -187,27 +187,52 @@ for year_idx, year in enumerate(range(2001, 2001 + num_years)):
             pixel_data[f"{i}_{j}"]['cu'].append(cu_pixyear)
             pixel_data[f"{i}_{j}"]['sos'].append(sos_pixyear)
 
-# Assemble final arrays by concatenating year chunks per pixel, then stacking
-# across pixels. Shape after stack: (n_models, days, n_samples).
+# Assemble final arrays by concatenating year chunks per pixel, then zero-padding
+# the sample axis to a fixed size and stacking across pixels. The fixed size is
+# the maximum possible number of pixel-year samples for a single sub-tile
+# (100 pixels per sub-tile times the number of years of data), so padding never
+# has to truncate real samples.
+# Shape after stack: (n_models, days, max_samples).
 print("Assembling forcing arrays")
+max_samples = 100 * num_years
+
 tavg_allpixyears = []
 dayl_allpixyears = []
 cu_allpixyears   = []
 sos_allpixyears  = []
+mask_allpixyears = []
 for i in range(output_x):
     for j in range(output_y):
         if (i, j) in skipped:
             continue
         d = pixel_data[f"{i}_{j}"]
-        tavg_allpixyears.append(np.concatenate(d['tavg'], axis=1))
-        dayl_allpixyears.append(np.concatenate(d['dayl'], axis=1))
-        cu_allpixyears.append(np.concatenate(d['cu'],   axis=1))
-        sos_allpixyears.append(np.concatenate(d['sos'],  axis=1))
+        tavg_ij = np.concatenate(d['tavg'], axis=1)
+        dayl_ij = np.concatenate(d['dayl'], axis=1)
+        cu_ij   = np.concatenate(d['cu'],   axis=1)
+        sos_ij  = np.concatenate(d['sos'],  axis=1)
 
-tavg = np.stack(tavg_allpixyears, axis=0)  # (n_models, days, n_samples)
+        n_samples_ij = tavg_ij.shape[1]
+        assert n_samples_ij <= max_samples, (
+            f"Pixel {i}_{j} has {n_samples_ij} samples, exceeding max of "
+            f"{max_samples} (100 * num_years)."
+        )
+        pad_width = max_samples - n_samples_ij
+        pad_spec = ((0, 0), (0, pad_width))
+
+        tavg_allpixyears.append(np.pad(tavg_ij, pad_spec))
+        dayl_allpixyears.append(np.pad(dayl_ij, pad_spec))
+        cu_allpixyears.append(np.pad(cu_ij, pad_spec))
+        sos_allpixyears.append(np.pad(sos_ij, pad_spec))
+
+        model_mask = np.zeros((1, max_samples), dtype=bool)
+        model_mask[0, :n_samples_ij] = True
+        mask_allpixyears.append(model_mask)
+
+tavg = np.stack(tavg_allpixyears, axis=0)  # (n_models, days, max_samples)
 dayl = np.stack(dayl_allpixyears, axis=0)
 cu   = np.stack(cu_allpixyears,   axis=0)
 sos  = np.stack(sos_allpixyears,  axis=0)
+mask = np.stack(mask_allpixyears, axis=0)  # (n_models, 1, max_samples)
 
 # If one of these are nan from the start, report as error
 if (np.any(np.isnan(tavg)) | np.any(np.isnan(dayl)) |
@@ -215,14 +240,31 @@ if (np.any(np.isnan(tavg)) | np.any(np.isnan(dayl)) |
     print('Found nan forcings')
     sys.exit(1)
 
-tavg = (tavg - tavg.mean(axis=(0,2),keepdims=True)) / tavg.std(axis=(0,2),keepdims=True)
-dayl = (dayl - dayl.mean(axis=(0,2),keepdims=True)) / dayl.std(axis=(0,2),keepdims=True)
-cu = (cu - cu.min(axis=(0,2),keepdims=True)) / (cu.max(axis=(0,2),keepdims=True) - cu.min(axis=(0,2),keepdims=True))
+# Normalization stats must ignore the zero-padded entries, or they'd be biased
+# towards zero. Use numpy.ma so padded entries are excluded from the
+# mean/std/min/max, then cast back to plain ndarrays.
+invalid_bc = np.broadcast_to(~mask, tavg.shape)
+
+tavg_masked = np.ma.masked_array(tavg, mask=invalid_bc)
+tavg = np.ma.getdata(
+    (tavg_masked - tavg_masked.mean(axis=(0,2), keepdims=True))
+    / tavg_masked.std(axis=(0,2), keepdims=True))
+
+dayl_masked = np.ma.masked_array(dayl, mask=invalid_bc)
+dayl = np.ma.getdata(
+    (dayl_masked - dayl_masked.mean(axis=(0,2), keepdims=True))
+    / dayl_masked.std(axis=(0,2), keepdims=True))
+
+cu_masked = np.ma.masked_array(cu, mask=invalid_bc)
+cu_min = cu_masked.min(axis=(0,2), keepdims=True)
+cu_max = cu_masked.max(axis=(0,2), keepdims=True)
+cu = np.ma.getdata((cu_masked - cu_min) / (cu_max - cu_min))
 cu = np.where(np.isnan(cu), 0, cu) # If cu doesn't change, it can be set to 0 without affecting model fitting.
 
 print('tavg', tavg.shape)
 print('dayl', dayl.shape)
 print('cu', cu.shape)
+print('mask', mask.shape)
 
 ##########################################
 # Load model parameters
@@ -243,11 +285,13 @@ assert params.shape[1] == total_models, "Number of models in parameters file doe
 # Move data to GPU
 ##########################################
 
+# (n_models, n_days, max_samples) -> (n_days, n_models, max_samples)
 with torch.device(device):
   tavg = torch.tensor(tavg.transpose(1,0,2), dtype=dtype)
   dayl = torch.tensor(dayl.transpose(1,0,2), dtype=dtype)
   cu = torch.tensor(cu.transpose(1,0,2), dtype=dtype)
   sos = torch.tensor(sos.transpose(1,0,2), dtype=dtype)
+  mask = torch.tensor(mask.transpose(1,0,2), dtype=torch.bool)  
 
 with torch.device(device):
     b_tavg = torch.tensor(params[0], dtype=dtype, requires_grad=False)
@@ -284,11 +328,16 @@ with torch.device(device):
    with torch.no_grad():
         pred = make_prediction(tavg, dayl, cu, b_tavg, b_dayl, b_cu, lam, kappa)
         # We use the continuous ranked probability score (CRPS) as the loss function
-        # which is a common forecasting metric.
+        # which is a common forecasting metric. 
         ## Sum over days to get total CRPS
+        ## (days, n_models, n_samples) -> (1, n_models, n_samples)
         crps = torch.sum((pred - sos)**2, dim=0, keepdim=True)
-        ## Mean over pixel-years to get average CRPS for each pixel
-        crps = torch.mean(crps, dim=2, keepdim=True)
+        ## Use torch.masked to take mean over pixel-years to get average CRPS 
+        ## for each pixel, excluding the zero-padded (invalid) pixel-year slots 
+        ## from the average.
+        ## (1, n_models, n_samples) -> (1, n_models, 1)
+        crps_masked = torch.masked_tensor(crps, mask)
+        crps = torch.mean(crps_masked, dim=2, keepdim=True).get_data()
 
 
 ##########################################
