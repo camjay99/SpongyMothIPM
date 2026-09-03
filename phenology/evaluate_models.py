@@ -277,7 +277,12 @@ with rio.open(f'/lustre/scratch5/cscholl/pheno_params/pheno_params_{args.window}
     profile = src.profile
 
 params = params.reshape((5, output_models, 1))
-params = params[~np.isnan(params)]
+# Remove models with any nan parameter, keeping the surviving models in the
+# same order as tavg/dayl/cu/mask (axis 2 varies fastest, then axis 1 -
+# i.e. C-order flattening of the (output_x, output_y) grid, matching the
+# i-outer/j-inner loop used to build those arrays).
+valid_models = ~np.any(np.isnan(params), axis=(0, 2))
+params = params[:, valid_models, :]
 assert params.shape[1] == total_models, "Number of models in parameters file does not match number of models in samples."
 
 
