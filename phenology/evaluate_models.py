@@ -298,12 +298,13 @@ with torch.device(device):
   sos = torch.tensor(sos.transpose(1,0,2), dtype=dtype)
   mask = torch.tensor(mask.transpose(1,0,2), dtype=torch.bool)  
 
+# (1, n_models, 1)
 with torch.device(device):
-    b_tavg = torch.tensor(params[0], dtype=dtype, requires_grad=False)
-    b_dayl = torch.tensor(params[1], dtype=dtype, requires_grad=False)
-    b_cu = torch.tensor(params[2], dtype=dtype, requires_grad=False)
-    kappa = torch.tensor(params[3], dtype=dtype, requires_grad=False)
-    lam = torch.tensor(params[4], dtype=dtype, requires_grad=False)
+    b_tavg = torch.tensor(params[[0], :, :], dtype=dtype, requires_grad=False)
+    b_dayl = torch.tensor(params[[1], :, :], dtype=dtype, requires_grad=False)
+    b_cu = torch.tensor(params[[2], :, :], dtype=dtype, requires_grad=False)
+    kappa = torch.tensor(params[[3], :, :], dtype=dtype, requires_grad=False)
+    lam = torch.tensor(params[[4], :, :], dtype=dtype, requires_grad=False)
 
 
 ##########################################
