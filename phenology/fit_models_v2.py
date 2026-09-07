@@ -205,10 +205,23 @@ for year_idx, year in enumerate(range(2001, 2001 + num_years)):
             days = np.arange(tavg_pixyear.shape[0]).reshape(-1, 1)
             sos_pixyear = (days >= sos_vals.reshape(1, -1)).astype(np.float32)
 
+            # Verify that there are no NaN values in the extracted data
+            if (np.any(np.isnan(tavg_pixyear)) or
+                np.any(np.isnan(dayl_pixyear)) or
+                np.any(np.isnan(cu_pixyear)) or
+                np.any(np.isnan(sos_pixyear))):
+                print(f"Found NaN values in forcings for pixel ({i}, {j}) in year {year}.")
+                skipped.append((i, j))
+                pixel_data[f"{i}_{j}"] = None
+                continue
+
+            # Add extracted data to other years data
             pixel_data[f"{i}_{j}"]['tavg'].append(tavg_pixyear)
             pixel_data[f"{i}_{j}"]['dayl'].append(dayl_pixyear)
             pixel_data[f"{i}_{j}"]['cu'].append(cu_pixyear)
             pixel_data[f"{i}_{j}"]['sos'].append(sos_pixyear)
+
+            
 
 # Assemble final arrays by concatenating year chunks per pixel, then stacking
 # across pixels. Shape after stack: (n_models, days, n_samples).
