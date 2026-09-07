@@ -11,6 +11,7 @@ import rasterio as rio
 from rasterio.plot import show
 from rasterio.windows import Window
 import torch
+import torch.masked as tmask
 
 import load_daymet_forcing_v2
 
@@ -342,7 +343,7 @@ with torch.device(device):
         ## for each pixel, excluding the zero-padded (invalid) pixel-year slots 
         ## from the average.
         ## (1, n_models, n_samples) -> (1, n_models, 1)
-        crps_masked = torch.masked_tensor(crps, mask)
+        crps_masked = tmask.masked_tensor(crps, mask)
         crps = torch.mean(crps_masked, dim=2, keepdim=True).get_data()
 
 
@@ -366,6 +367,7 @@ for i in range(output_x):
 crps_save = torch.full((1, output_models, 1), np.nan, dtype=dtype, device='cpu')
 crps_save.scatter_(1, torch.tensor(index).reshape(1,-1,1), crps.cpu())
 
+profile['count'] = 1
 with rio.Env():
     with rio.open(f'/lustre/scratch5/cscholl/pheno_eval/pheno_eval_{args.window}.tif', 
                   'w', **profile) as dst:
