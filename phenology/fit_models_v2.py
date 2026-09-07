@@ -10,6 +10,7 @@ import numpy as np
 import rasterio as rio
 from rasterio.plot import show
 from rasterio.windows import Window
+from rasterio.windows import transform
 import torch
 
 import load_daymet_forcing_v2
@@ -436,12 +437,13 @@ with rio.open(f'/lustre/scratch5/cscholl/modis/2001_01_01.tif',
   profile = src.profile
 
 # Update relevant save data
-profile['transform'] = rio.Affine(profile['transform'][0]*10,
-                                  profile['transform'][1],
-                                  profile['transform'][2],
-                                  profile['transform'][3],
-                                  profile['transform'][4]*10,
-                                  profile['transform'][5])
+window_transform = transform(window, src.transform)
+profile['transform'] = rio.Affine(window_transform[0]*10,
+                                  window_transform[1],
+                                  window_transform[2],
+                                  window_transform[3],
+                                  window_transform[4]*10,
+                                  window_transform[5])
 profile['count'] = output.shape[0]
 profile['height'] = output.shape[1]
 profile['width'] = output.shape[2]

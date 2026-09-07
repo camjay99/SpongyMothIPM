@@ -9,3 +9,5 @@ outputs
 data/daymet
 data/cmip6
 data/modis
+data/pheno_params
+data/pheno_eval
