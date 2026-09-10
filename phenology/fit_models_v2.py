@@ -235,6 +235,7 @@ for i in range(output_x):
         if (i, j) in skipped:
             continue
         d = pixel_data[f"{i}_{j}"]
+        # 24 of (days, x) -> (days, n_samples)
         tavg_allpixyears.append(np.concatenate(d['tavg'], axis=1))
         dayl_allpixyears.append(np.concatenate(d['dayl'], axis=1))
         cu_allpixyears.append(np.concatenate(d['cu'],   axis=1))
@@ -279,22 +280,23 @@ def random_init_params(total_models, device, dtype):
         b_tavg = (torch.rand((1,total_models,1), dtype=dtype)*0.1 + 0.95).requires_grad_()
         b_dayl = (torch.rand((1,total_models,1), dtype=dtype)*0.1 + 0.95).requires_grad_()
         b_cu   = (torch.rand((1,total_models,1), dtype=dtype)*0.01 + 0.095).requires_grad_()
+        b_const = (torch.rand((1,total_models,1), dtype=dtype) + 0.5).requires_grad_()
         kappa  = (torch.rand((1,total_models,1), dtype=dtype)*0.1 - 8.05).requires_grad_()
         lam    = (torch.rand((1,total_models,1), dtype=dtype)*0.01 - 0.095).requires_grad_()
-    return b_tavg, b_dayl, b_cu, kappa, lam
-b_tavg, b_dayl, b_cu, kappa, lam = random_init_params(total_models, device, dtype)
+    return b_tavg, b_dayl, b_cu, b_const, kappa, lam
+b_tavg, b_dayl, b_cu, b_const, kappa, lam = random_init_params(total_models, device, dtype)
 
 
 ##########################################
 # Define Forward Pass
 ##########################################
 
-def make_prediction(tavgs, dayls, cus, b_tavg, b_dayl, b_cu, lam, kappa):
+def make_prediction(tavgs, dayls, cus, b_tavg, b_dayl, b_cu, b_const, lam, kappa):
     pss = []
     hs = torch.zeros((tavgs.shape[1], tavgs.shape[2]))
     ps = torch.zeros((tavgs.shape[1], tavgs.shape[2]))
     for i in range(tavgs.shape[0]):
-        forcings = tavgs[i,:,:]*b_tavg + dayls[i,:,:]*b_dayl + cus[i,:,:]*b_cu
+        forcings = tavgs[i,:,:]*b_tavg + dayls[i,:,:]*b_dayl + cus[i,:,:]*b_cu + b_const
         forcings = torch.maximum(forcings, torch.tensor(0, dtype=dtype))
         hs = hs + forcings*(1 - hs/100.)
         ps = (1 / (torch.exp(-(kappa + lam*hs)) + 1)) * (1 - ps) + ps
@@ -340,7 +342,7 @@ with torch.device(device):
     # lam.grad = None
     optimizer.zero_grad()
 
-    pred = make_prediction(tavg, dayl, cu, b_tavg, b_dayl, b_cu, lam, kappa)
+    pred = make_prediction(tavg, dayl, cu, b_tavg, b_dayl, b_cu, b_const, lam, kappa)
 
     # We use the continuous ranked probability score (CRPS) as the loss function
     # which is a common forecasting metric.
@@ -354,6 +356,7 @@ with torch.device(device):
     b_tavg.grad[torch.isnan(b_tavg.grad)] = 0
     b_dayl.grad[torch.isnan(b_dayl.grad)] = 0
     b_cu.grad[torch.isnan(b_cu.grad)] = 0
+    b_const.grad[torch.isnan(b_const.grad)] = 0
     kappa.grad[torch.isnan(kappa.grad)] = 0
     lam.grad[torch.isnan(lam.grad)] = 0
 
@@ -363,7 +366,7 @@ with torch.device(device):
   while retry > 0 and not fit:
     try:
         # Run a course pass with Adam optimizer to find a good starting point for L-BFGS optimization
-        opt_adam = torch.optim.Adam([b_tavg, b_dayl, b_cu, kappa, lam], lr=0.01)
+        opt_adam = torch.optim.Adam([b_tavg, b_dayl, b_cu, b_const, kappa, lam], lr=0.01)
         es = EarlyStopper(patience=25, min_delta=0.1)
         print(f"Initial Loss: {training_run(opt_adam):.4f}")
         for epoch in range(10000):
@@ -377,7 +380,7 @@ with torch.device(device):
                 print(f'Early stopping Adam pretraining, Epoch: {epoch+1}')
                 break
 
-        opt_lbgfs = torch.optim.LBFGS([b_tavg, b_dayl, b_cu, kappa, lam], lr=2,
+        opt_lbgfs = torch.optim.LBFGS([b_tavg, b_dayl, b_cu, b_const, kappa, lam], lr=2,
                                     history_size=200, max_iter=20, line_search_fn='strong_wolfe')
         es = EarlyStopper(patience=25, min_delta=0.1)
         for epoch in range(num_epochs):
@@ -387,7 +390,7 @@ with torch.device(device):
             if torch.any(torch.isnan(loss)):
                 print("Encountered NaN loss, retrying with new random initialization.")
                 retry -= 1
-                b_tavg, b_dayl, b_cu, kappa, lam = random_init_params(total_models, device, dtype)
+                b_tavg, b_dayl, b_cu, b_const, kappa, lam = random_init_params(total_models, device, dtype)
                 break
 
             if es.early_stop(loss.item()):
@@ -402,7 +405,7 @@ with torch.device(device):
     except:
         print("Encountered error during optimization, retrying with new random initialization.")
         retry -= 1
-        b_tavg, b_dayl, b_cu, kappa, lam = random_init_params(total_models, device, dtype)
+        b_tavg, b_dayl, b_cu, b_const, kappa, lam = random_init_params(total_models, device, dtype)
   if retry == 0:
     print("Failed to fit model after multiple retries. Exiting.")
     sys.exit(1)
@@ -427,11 +430,13 @@ for i in range(output_x):
 b_tavg_save = torch.full((1, output_models, 1), np.nan, dtype=dtype, device='cpu')
 b_dayl_save = torch.full((1, output_models, 1), np.nan, dtype=dtype, device='cpu')
 b_cu_save   = torch.full((1, output_models, 1), np.nan, dtype=dtype, device='cpu')
+b_const_save = torch.full((1, output_models, 1), np.nan, dtype=dtype, device='cpu')
 kappa_save  = torch.full((1, output_models, 1), np.nan, dtype=dtype, device='cpu')
 lam_save    = torch.full((1, output_models, 1), np.nan, dtype=dtype, device='cpu')
 b_tavg_save.scatter_(1, torch.tensor(index).reshape(1,-1,1), b_tavg.detach().cpu())
 b_dayl_save.scatter_(1, torch.tensor(index).reshape(1,-1,1), b_dayl.detach().cpu())
 b_cu_save.scatter_(1,   torch.tensor(index).reshape(1,-1,1), b_cu.detach().cpu())
+b_const_save.scatter_(1, torch.tensor(index).reshape(1,-1,1), b_const.detach().cpu())
 kappa_save.scatter_(1,  torch.tensor(index).reshape(1,-1,1), kappa.detach().cpu())
 lam_save.scatter_(1,    torch.tensor(index).reshape(1,-1,1), lam.detach().cpu())
 
@@ -439,9 +444,10 @@ lam_save.scatter_(1,    torch.tensor(index).reshape(1,-1,1), lam.detach().cpu())
 b_tavg_save = b_tavg_save.reshape(1, output_x, output_y)
 b_dayl_save = b_dayl_save.reshape(1, output_x, output_y)
 b_cu_save   = b_cu_save.reshape(1, output_x, output_y)
+b_const_save = b_const_save.reshape(1, output_x, output_y)
 kappa_save  = kappa_save.reshape(1, output_x, output_y)
 lam_save    = lam_save.reshape(1, output_x, output_y)
-output = torch.cat((b_tavg_save, b_dayl_save, b_cu_save, kappa_save, lam_save), axis=0)
+output = torch.cat((b_tavg_save, b_dayl_save, b_cu_save, b_const_save, kappa_save, lam_save), axis=0)
 output = output.detach().numpy()
 
 with rio.open(f'/lustre/scratch5/cscholl/modis/2001_01_01.tif',
