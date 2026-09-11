@@ -144,9 +144,7 @@ for i in range(output_x):
 
 # Save sample choices for reproducibility and later evaluation.
 with open(f'/lustre/scratch5/cscholl/samples/{args.window}.json', 'w') as f:
-    f.write(json.dumps(sample_choices))
-
-total_models = output_models - len(skipped)
+    f.write(json.dumps(sample_choices)
 
 
 ##########################################
@@ -275,6 +273,8 @@ with torch.device(device):
   cu   = torch.tensor(cu.transpose(1,0,2),   dtype=dtype)
   sos  = torch.tensor(sos.transpose(1,0,2),  dtype=dtype)
 
+
+total_models = output_models - len(skipped)
 def random_init_params(total_models, device, dtype):
     with torch.device(device):
         b_tavg = (torch.rand((1,total_models,1), dtype=dtype)*0.1 + 0.95).requires_grad_()
