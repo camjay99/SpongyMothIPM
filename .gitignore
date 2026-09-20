@@ -11,3 +11,6 @@ data/cmip6
 data/modis
 data/pheno_params
 data/pheno_eval
+data/pheno_params_test
+data/pheno_params_adamw
+data/917

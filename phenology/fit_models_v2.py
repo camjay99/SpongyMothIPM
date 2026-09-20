@@ -183,23 +183,27 @@ for year_idx, year in enumerate(range(2001, 2001 + num_years)):
             year_mask = samples[f"{i}_{j}"][0] == year_idx
             if not year_mask.any():
                 continue
-
             sample_rows = samples[f"{i}_{j}"][1][year_mask]
             sample_cols = samples[f"{i}_{j}"][2][year_mask]
             sample_rc = (sample_rows, sample_cols)
 
             # Extract forcings for the sampled pixels within the 10x10 sub-tile
+            # (days, height, width) -> (days, 10, 10)
             sl = (slice(None),)
             tavg_sub = tavg_yr[:, 10*i:10*(i+1), 10*j:10*(j+1)]
             dayl_sub = dayl_yr[:, 10*i:10*(i+1), 10*j:10*(j+1)]
             cu_sub   = cu_yr[:,  10*i:10*(i+1), 10*j:10*(j+1)]
+            # (1, height, width) -> (1, 10, 10)
             sos_sub  = sos_yr[:, 10*i:10*(i+1), 10*j:10*(j+1)]
 
-            tavg_pixyear = tavg_sub[sl + sample_rc]  # (days, n_samples)
+            # (days, 10, 10) -> (days, n_samples_year)
+            tavg_pixyear = tavg_sub[sl + sample_rc]  
             dayl_pixyear = dayl_sub[sl + sample_rc]
             cu_pixyear   = cu_sub[sl + sample_rc]
 
-            sos_vals = sos_sub[sl + sample_rc]  # (1, n_samples)
+            # (1, 10, 10) -> (1, n_samples_year)
+            sos_vals = sos_sub[sl + sample_rc]
+            # (1, n_samples_year) -> (days, n_samples_year)
             days = np.arange(tavg_pixyear.shape[0]).reshape(-1, 1)
             sos_pixyear = (days >= sos_vals.reshape(1, -1)).astype(np.float32)
 
@@ -233,13 +237,14 @@ for i in range(output_x):
         if (i, j) in skipped:
             continue
         d = pixel_data[f"{i}_{j}"]
-        # 24 of (days, x) -> (days, n_samples)
+        # 24 of (days, n_samples_year) -> (days, n_samples)
         tavg_allpixyears.append(np.concatenate(d['tavg'], axis=1))
         dayl_allpixyears.append(np.concatenate(d['dayl'], axis=1))
         cu_allpixyears.append(np.concatenate(d['cu'],   axis=1))
         sos_allpixyears.append(np.concatenate(d['sos'],  axis=1))
 
-tavg = np.stack(tavg_allpixyears, axis=0)  # (n_models, days, n_samples)
+# n_models x (days, n_samples) -> (n_models, days, n_samples)
+tavg = np.stack(tavg_allpixyears, axis=0) 
 dayl = np.stack(dayl_allpixyears, axis=0)
 cu   = np.stack(cu_allpixyears,   axis=0)
 sos  = np.stack(sos_allpixyears,  axis=0)
@@ -263,10 +268,7 @@ print('cu', cu.shape)
 # Move data to GPU
 ##########################################
 
-# Tensors are organized as:
-# dim0 - days
-# dim1 - models
-# dim2 - samples (pixel-years)
+# (n_models, days, n_samples) -> (days, n_models, n_samples)
 with torch.device(device):
   tavg = torch.tensor(tavg.transpose(1,0,2), dtype=dtype)
   dayl = torch.tensor(dayl.transpose(1,0,2), dtype=dtype)
@@ -293,14 +295,17 @@ b_tavg, b_dayl, b_cu, b_const, kappa, lam = random_init_params(total_models, dev
 
 def make_prediction(tavgs, dayls, cus, b_tavg, b_dayl, b_cu, b_const, lam, kappa):
     pss = []
+    # (n_models, n_samples)
     hs = torch.zeros((tavgs.shape[1], tavgs.shape[2]))
     ps = torch.zeros((tavgs.shape[1], tavgs.shape[2]))
+    # Iterate across days, updating the state of the model for each day.
     for i in range(tavgs.shape[0]):
         forcings = tavgs[i,:,:]*b_tavg + dayls[i,:,:]*b_dayl + cus[i,:,:]*b_cu + b_const
         forcings = torch.maximum(forcings, torch.tensor(0, dtype=dtype))
         hs = hs + forcings*(1 - hs/100.)
         ps = (1 / (torch.exp(-(kappa + lam*hs)) + 1)) * (1 - ps) + ps
         pss.append(ps)
+    # days x (n_models, n_samples) -> (days, n_models, n_samples)
     pred = torch.concat(pss, dim=0)
 
     return pred
@@ -471,5 +476,29 @@ profile['dtype'] = output.dtype
 # Save results
 with rio.Env():
     with rio.open(f'/lustre/scratch5/cscholl/pheno_params/pheno_params_{args.window}.tif',
+                  'w', **profile) as dst:
+        dst.write(output)
+
+tavg = tavg.detach().cpu().numpy().mean(axis=(0,2), keepdims=True)
+dayl = dayl.detach().cpu().numpy().mean(axis=(0,2), keepdims=True)
+cus = cu.detach().cpu().numpy().mean(axis=(0,2), keepdims=True)
+sos = sos.detach().cpu().numpy().mean(axis=(0,2), keepdims=True)
+
+tavg_save = torch.full((1, output_models, 1), np.nan, dtype=dtype, device='cpu')
+dayl_save = torch.full((1, output_models, 1), np.nan, dtype=dtype, device='cpu')
+cus_save = torch.full((1, output_models, 1), np.nan, dtype=dtype, device='cpu')
+sos_save = torch.full((1, output_models, 1), np.nan, dtype=dtype, device='cpu')
+tavg_save.scatter_(1, torch.tensor(index).reshape(1,-1,1), tavg)
+dayl_save.scatter_(1, torch.tensor(index).reshape(1,-1,1), dayl)
+cus_save.scatter_(1, torch.tensor(index).reshape(1,-1,1), cus)
+sos_save.scatter_(1, torch.tensor(index).reshape(1,-1,1), sos)
+
+output = torch.cat((tavg_save, dayl_save, cus_save, sos_save), axis=0)
+output = output.detach().numpy()
+
+profile['count'] = 4
+
+with rio.Env():
+    with rio.open(f'/lustre/scratch5/cscholl/pheno_params/drivers_{args.window}.tif',
                   'w', **profile) as dst:
         dst.write(output)
