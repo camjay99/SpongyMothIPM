@@ -289,6 +289,32 @@ def random_init_params(total_models, device, dtype):
 b_tavg, b_dayl, b_cu, b_const, kappa, lam = random_init_params(total_models, device, dtype)
 
 
+tavg_ = tavg.detach().cpu().mean(dim=(0,2), keepdims=True)
+dayl_ = dayl.detach().cpu().mean(dim=(0,2), keepdims=True)
+cus_ = cu.detach().cpu().mean(dim=(0,2), keepdims=True)
+sos_ = sos.detach().cpu().mean(dim=(0,2), keepdims=True)
+
+tavg_save = torch.full((1, output_models, 1), np.nan, dtype=dtype, device='cpu')
+dayl_save = torch.full((1, output_models, 1), np.nan, dtype=dtype, device='cpu')
+cus_save = torch.full((1, output_models, 1), np.nan, dtype=dtype, device='cpu')
+sos_save = torch.full((1, output_models, 1), np.nan, dtype=dtype, device='cpu')
+tavg_save.scatter_(1, torch.tensor(index).reshape(1,-1,1), tavg_)
+dayl_save.scatter_(1, torch.tensor(index).reshape(1,-1,1), dayl_)
+cus_save.scatter_(1, torch.tensor(index).reshape(1,-1,1), cus_)
+sos_save.scatter_(1, torch.tensor(index).reshape(1,-1,1), sos_)
+
+output = torch.cat((tavg_save, dayl_save, cus_save, sos_save), axis=0)
+output = output.detach().numpy()
+
+profile['count'] = 4
+
+with rio.Env():
+    with rio.open(f'/lustre/scratch5/cscholl/pheno_params/drivers_{args.window}.tif',
+                  'w', **profile) as dst:
+        dst.write(output)
+
+print("Saved mean forcings for window ", args.window)
+
 ##########################################
 # Define Forward Pass
 ##########################################
@@ -479,26 +505,3 @@ with rio.Env():
                   'w', **profile) as dst:
         dst.write(output)
 
-tavg = tavg.detach().cpu().numpy().mean(axis=(0,2), keepdims=True)
-dayl = dayl.detach().cpu().numpy().mean(axis=(0,2), keepdims=True)
-cus = cu.detach().cpu().numpy().mean(axis=(0,2), keepdims=True)
-sos = sos.detach().cpu().numpy().mean(axis=(0,2), keepdims=True)
-
-tavg_save = torch.full((1, output_models, 1), np.nan, dtype=dtype, device='cpu')
-dayl_save = torch.full((1, output_models, 1), np.nan, dtype=dtype, device='cpu')
-cus_save = torch.full((1, output_models, 1), np.nan, dtype=dtype, device='cpu')
-sos_save = torch.full((1, output_models, 1), np.nan, dtype=dtype, device='cpu')
-tavg_save.scatter_(1, torch.tensor(index).reshape(1,-1,1), tavg)
-dayl_save.scatter_(1, torch.tensor(index).reshape(1,-1,1), dayl)
-cus_save.scatter_(1, torch.tensor(index).reshape(1,-1,1), cus)
-sos_save.scatter_(1, torch.tensor(index).reshape(1,-1,1), sos)
-
-output = torch.cat((tavg_save, dayl_save, cus_save, sos_save), axis=0)
-output = output.detach().numpy()
-
-profile['count'] = 4
-
-with rio.Env():
-    with rio.open(f'/lustre/scratch5/cscholl/pheno_params/drivers_{args.window}.tif',
-                  'w', **profile) as dst:
-        dst.write(output)
