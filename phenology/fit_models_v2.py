@@ -288,6 +288,16 @@ def random_init_params(total_models, device, dtype):
     return b_tavg, b_dayl, b_cu, b_const, kappa, lam
 b_tavg, b_dayl, b_cu, b_const, kappa, lam = random_init_params(total_models, device, dtype)
 
+# Convert output to raster format for saving
+# Create index tensor for scattering
+index = []
+for i in range(output_x):
+  for j in range(output_y):
+    # Skip if no samples
+    if (i,j) in skipped:
+      print(f'Skipping {i}, {j}')
+      continue
+    index.append(i*output_y + j)
 
 tavg_ = tavg.detach().cpu().mean(dim=(0,2), keepdims=True)
 dayl_ = dayl.detach().cpu().mean(dim=(0,2), keepdims=True)
