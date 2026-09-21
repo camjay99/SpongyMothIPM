@@ -144,7 +144,7 @@ for i in range(output_x):
 
 # Save sample choices for reproducibility and later evaluation.
 with open(f'/lustre/scratch5/cscholl/samples/{args.window}.json', 'w') as f:
-    f.write(json.dumps(sample_choices)
+    f.write(json.dumps(sample_choices))
 
 
 ##########################################
@@ -333,6 +333,19 @@ sos_save.scatter_(1, torch.tensor(index).reshape(1,-1,1), sos_)
 
 output = torch.cat((tavg_save, dayl_save, cus_save, sos_save), axis=0)
 output = output.detach().numpy()
+
+# Update relevant save data
+window_transform = transform(window, src.transform)
+profile['transform'] = rio.Affine(window_transform[0]*10,
+                                  window_transform[1],
+                                  window_transform[2],
+                                  window_transform[3],
+                                  window_transform[4]*10,
+                                  window_transform[5])
+profile['count'] = output.shape[0]
+profile['height'] = output.shape[1]
+profile['width'] = output.shape[2]
+profile['dtype'] = output.dtype
 
 profile['count'] = 4
 
