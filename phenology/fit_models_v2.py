@@ -299,6 +299,24 @@ for i in range(output_x):
       continue
     index.append(i*output_y + j)
 
+with rio.open(f'/lustre/scratch5/cscholl/modis/2001_01_01.tif',
+                boundless=True,
+                window=window) as src:
+  profile = src.profile
+
+# Update relevant save data
+window_transform = transform(window, src.transform)
+profile['transform'] = rio.Affine(window_transform[0]*10,
+                                  window_transform[1],
+                                  window_transform[2],
+                                  window_transform[3],
+                                  window_transform[4]*10,
+                                  window_transform[5])
+profile['count'] = output.shape[0]
+profile['height'] = output.shape[1]
+profile['width'] = output.shape[2]
+profile['dtype'] = output.dtype
+
 tavg_ = tavg.detach().cpu().mean(dim=(0,2), keepdims=True)
 dayl_ = dayl.detach().cpu().mean(dim=(0,2), keepdims=True)
 cus_ = cu.detach().cpu().mean(dim=(0,2), keepdims=True)
