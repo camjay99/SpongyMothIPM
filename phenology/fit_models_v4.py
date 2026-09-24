@@ -261,7 +261,7 @@ dayl_mean = dayl.mean(axis=(1,2),keepdims=True)
 dayl_std = dayl.std(axis=(1,2),keepdims=True)
 cu_min = cu.min(axis=(1,2),keepdims=True)
 cu_max = cu.max(axis=(1,2),keepdims=True)
-forcing_stats = np.stack((tavg_mean, tavg_std, dayl_mean, dayl_std, cu_min, cu_max), axis=0)
+forcing_stats = np.stack((tavg_mean, tavg_std, dayl_mean, dayl_std, cu_min, cu_max), axis=0).squeeze()
 
 tavg = (tavg - tavg_mean) / tavg_std
 dayl = (dayl - dayl_mean) / dayl_std
@@ -499,9 +499,13 @@ with rio.Env():
                   'w', **profile) as dst:
         dst.write(output)
 
-profile['count'] = forcing_stats.shape[0]
+fstats_save = torch.full((6, output_models, 1), np.nan, dtype=dtype, device='cpu')
+fstats_save.scatter_(1, torch.tensor(index).reshape(1,-1,1), forcing_stats.detach().cpu())
+fstats_save = fstats_save.reshape(6, output_x, output_y)
+
+profile['count'] = fstats_save.shape[0]
 # Save results
 with rio.Env():
     with rio.open(f'/lustre/scratch5/cscholl/forcings/forcings_{args.window}.tif',
                   'w', **profile) as dst:
-        dst.write(forcing_stats)
+        dst.write(fstats_save)
