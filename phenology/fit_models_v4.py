@@ -370,8 +370,9 @@ with torch.device(device):
 
     # We use the continuous ranked probability score (CRPS) as the loss function
     # which is a common forecasting metric.
-    loss = torch.sum((pred - sos)**2)
-    loss.backward()
+    # Calculate loss across each model independently.
+    loss = torch.sum((pred - sos)**2, dim=(0,2))
+    loss.backward(torch.ones_like(loss))
 
     if torch.any(torch.isnan(loss)):
         raise Exception("Encountered NaN loss")
