@@ -399,7 +399,7 @@ with torch.device(device):
             opt_adam.step()
 
             if epoch % 50 == 0:
-                print(f'Adam Epoch [{epoch+1}/10000], Loss: {loss:.4f}')
+                print(f'Adam Epoch [{epoch+1}/10000], Loss: {loss.sum():.4f}')
 
             if es.early_stop(loss.item()):
                 print(f'Early stopping Adam pretraining, Epoch: {epoch+1}')
@@ -418,13 +418,13 @@ with torch.device(device):
                 b_tavg, b_dayl, b_cu, b_const, kappa, lam = random_init_params(total_models, device, dtype)
                 break
 
-            if es.early_stop(loss.item()):
+            if es.early_stop(loss.sum().item()):
                 print(f'Early stopping L-BFGS finetuning, Epoch: {epoch+1}')
                 fit = True
                 break
             
             if epoch % report_freq == 0:
-                print(f'L-BFGS Epoch [{epoch+1}/{num_epochs}], Loss: {loss:.4f}')
+                print(f'L-BFGS Epoch [{epoch+1}/{num_epochs}], Loss: {loss.sum():.4f}')
         if epoch == num_epochs-1:
             fit = True
     except Exception as e:
