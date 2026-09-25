@@ -427,8 +427,9 @@ with torch.device(device):
                 print(f'L-BFGS Epoch [{epoch+1}/{num_epochs}], Loss: {loss:.4f}')
         if epoch == num_epochs-1:
             fit = True
-    except:
-        print("Encountered error during optimization, retrying with new random initialization.")
+    except Exception as e:
+        print(f"Encountered error during optimization: {e}")
+        print("Retrying with new random initialization.")
         retry -= 1
         b_tavg, b_dayl, b_cu, b_const, kappa, lam = random_init_params(total_models, device, dtype)
   if retry == 0:
