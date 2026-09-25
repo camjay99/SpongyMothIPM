@@ -393,7 +393,7 @@ with torch.device(device):
         # Run a course pass with Adam optimizer to find a good starting point for L-BFGS optimization
         opt_adam = torch.optim.Adam([b_tavg, b_dayl, b_cu, b_const, kappa, lam], lr=0.01)
         es = EarlyStopper(patience=25, min_delta=0.1)
-        print(f"Initial Loss: {training_run(opt_adam):.4f}")
+        print(f"Initial Loss: {training_run(opt_adam).sum():.4f}")
         for epoch in range(10000):
             loss = training_run(opt_adam)
             opt_adam.step()
