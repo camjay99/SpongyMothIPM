@@ -401,7 +401,7 @@ with torch.device(device):
             if epoch % 50 == 0:
                 print(f'Adam Epoch [{epoch+1}/10000], Loss: {loss.sum():.4f}')
 
-            if es.early_stop(loss.item()):
+            if es.early_stop(loss.sum().item()):
                 print(f'Early stopping Adam pretraining, Epoch: {epoch+1}')
                 break
 
