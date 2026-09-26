@@ -394,37 +394,37 @@ with torch.device(device):
         opt_adam = torch.optim.Adam([b_tavg, b_dayl, b_cu, b_const, kappa, lam], lr=0.01)
         es = EarlyStopper(patience=25, min_delta=0.1)
         print(f"Initial Loss: {training_run(opt_adam).sum():.4f}")
-        for epoch in range(10000):
+        for epoch in range(15000):
             loss = training_run(opt_adam)
             opt_adam.step()
 
             if epoch % 50 == 0:
-                print(f'Adam Epoch [{epoch+1}/10000], Loss: {loss.sum():.4f}')
+                print(f'Adam Epoch [{epoch+1}/15000], Loss: {loss.sum():.4f}')
 
             if es.early_stop(loss.sum().item()):
                 print(f'Early stopping Adam pretraining, Epoch: {epoch+1}')
                 break
 
-        opt_lbgfs = torch.optim.LBFGS([b_tavg, b_dayl, b_cu, b_const, kappa, lam], lr=2,
-                                    history_size=200, max_iter=20, line_search_fn='strong_wolfe')
-        es = EarlyStopper(patience=25, min_delta=0.1)
-        for epoch in range(num_epochs):
-            loss = training_run(opt_lbgfs)
-            opt_lbgfs.step(lambda : training_run(opt_lbgfs))
+        # opt_lbgfs = torch.optim.LBFGS([b_tavg, b_dayl, b_cu, b_const, kappa, lam], lr=2,
+        #                             history_size=200, max_iter=20, line_search_fn='strong_wolfe')
+        # es = EarlyStopper(patience=25, min_delta=0.1)
+        # for epoch in range(num_epochs):
+        #     loss = training_run(opt_lbgfs)
+        #     opt_lbgfs.step(lambda : training_run(opt_lbgfs))
 
-            if torch.any(torch.isnan(loss)):
-                print("Encountered NaN loss, retrying with new random initialization.")
-                retry -= 1
-                b_tavg, b_dayl, b_cu, b_const, kappa, lam = random_init_params(total_models, device, dtype)
-                break
+        #     if torch.any(torch.isnan(loss)):
+        #         print("Encountered NaN loss, retrying with new random initialization.")
+        #         retry -= 1
+        #         b_tavg, b_dayl, b_cu, b_const, kappa, lam = random_init_params(total_models, device, dtype)
+        #         break
 
-            if es.early_stop(loss.sum().item()):
-                print(f'Early stopping L-BFGS finetuning, Epoch: {epoch+1}')
-                fit = True
-                break
+        #     if es.early_stop(loss.sum().item()):
+        #         print(f'Early stopping L-BFGS finetuning, Epoch: {epoch+1}')
+        #         fit = True
+        #         break
             
-            if epoch % report_freq == 0:
-                print(f'L-BFGS Epoch [{epoch+1}/{num_epochs}], Loss: {loss.sum():.4f}')
+        #     if epoch % report_freq == 0:
+        #         print(f'L-BFGS Epoch [{epoch+1}/{num_epochs}], Loss: {loss.sum():.4f}')
         if epoch == num_epochs-1:
             fit = True
     except Exception as e:
