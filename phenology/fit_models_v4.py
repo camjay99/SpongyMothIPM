@@ -255,6 +255,7 @@ if (np.any(np.isnan(tavg)) | np.any(np.isnan(dayl)) |
     print('Found nan forcings')
     sys.exit(1)
 
+# Average over days/samples
 tavg_mean = tavg.mean(axis=(1,2),keepdims=True)
 tavg_std = tavg.std(axis=(1,2),keepdims=True)
 dayl_mean = dayl.mean(axis=(1,2),keepdims=True)
@@ -291,7 +292,7 @@ def random_init_params(total_models, device, dtype):
         b_dayl = (torch.rand((1,total_models,1), dtype=dtype)*0.1 + 0.95).requires_grad_()
         b_cu   = (torch.rand((1,total_models,1), dtype=dtype)*0.01 + 0.095).requires_grad_()
         b_const = (torch.rand((1,total_models,1), dtype=dtype) + 0.5).requires_grad_()
-        kappa  = (torch.rand((1,total_models,1), dtype=dtype)*0.1 - 8.05).requires_grad_()
+        kappa  = (torch.rand((1,total_models,1), dtype=dtype)*0.1 - -0.55).requires_grad_()
         lam    = (torch.rand((1,total_models,1), dtype=dtype)*0.01 - 0.095).requires_grad_()
     return b_tavg, b_dayl, b_cu, b_const, kappa, lam
 b_tavg, b_dayl, b_cu, b_const, kappa, lam = random_init_params(total_models, device, dtype)
@@ -322,7 +323,7 @@ def make_prediction(tavgs, dayls, cus, b_tavg, b_dayl, b_cu, b_const, lam, kappa
         forcings = tavgs[i,:,:]*b_tavg + dayls[i,:,:]*b_dayl + cus[i,:,:]*b_cu + b_const
         forcings = torch.maximum(forcings, torch.tensor(0, dtype=dtype))
         hs = hs + forcings*(1 - hs/100.)
-        ps = (1 / (torch.exp(-(kappa + lam*hs)) + 1)) * (1 - ps) + ps
+        ps = (1 / (torch.exp(-lam*(100*kappa + hs)) + 1)) * (1 - ps) + ps
         pss.append(ps)
     # days x (n_models, n_samples) -> (days, n_models, n_samples)
     pred = torch.concat(pss, dim=0)
@@ -334,29 +335,34 @@ def make_prediction(tavgs, dayls, cus, b_tavg, b_dayl, b_cu, b_const, lam, kappa
 # Run Model Training
 ##########################################
 
-class EarlyStopper:
-    def __init__(self, patience=1, min_delta=0):
+class PerModelEarlyStopper:
+    """Tracks early stopping independently for each model in a batch.
+
+    Unlike EarlyStopper, which reduces losses to a single scalar and stops
+    every model at once, this keeps a per-model counter and min-loss so that
+    models within the same window/batch converge (and freeze) at different
+    epochs, rather than all sharing one stopping epoch.
+    """
+    def __init__(self, num_models, patience=1, min_delta=0, device='cpu', dtype=torch.float32):
         self.patience = patience
         self.min_delta = min_delta
-        self.counter = 0
-        self.min_validation_loss = float('inf')
+        self.counter = torch.zeros(num_models, dtype=torch.long, device=device)
+        self.min_loss = torch.full((num_models,), float('inf'), dtype=dtype, device=device)
+        self.stopped = torch.zeros(num_models, dtype=torch.bool, device=device)
 
-    def early_stop(self, validation_loss):
-        if validation_loss < (self.min_validation_loss - self.min_delta):
-            self.min_validation_loss = validation_loss
-            self.counter = 0
-        else:
-            self.counter += 1
-            if self.counter >= self.patience:
-                return True
-        return False
+    def update(self, loss):
+        # loss: detached per-model loss tensor of shape (num_models,)
+        improved = loss < (self.min_loss - self.min_delta)
+        self.min_loss = torch.where(improved, loss, self.min_loss)
+        self.counter = torch.where(improved, torch.zeros_like(self.counter), self.counter + 1)
+        self.stopped = self.stopped | (self.counter >= self.patience)
+        return self.stopped
 
 print("Starting model fitting")
 with torch.device(device):
   report_freq = 5
   #optimizer = torch.optim.LBFGS([b_tavg, b_dayl, b_cu, kappa, lam], lr=1,
   #                              history_size=400, max_iter=20, line_search_fn='strong_wolfe')
-  es = EarlyStopper(patience=25, min_delta=0.1)
   # Closure capturing forward/backward passes is required for LBFGS optimization
   def training_run(optimizer):
     # b_tavg.grad = None
@@ -391,18 +397,31 @@ with torch.device(device):
   while retry > 0 and not fit:
     try:
         # Run a course pass with Adam optimizer to find a good starting point for L-BFGS optimization
-        opt_adam = torch.optim.Adam([b_tavg, b_dayl, b_cu, b_const, kappa, lam], lr=0.01)
-        es = EarlyStopper(patience=25, min_delta=0.1)
+        params = [b_tavg, b_dayl, b_cu, b_const, kappa, lam]
+        opt_adam = torch.optim.Adam(params, lr=0.01)
+        es = PerModelEarlyStopper(total_models, patience=25, min_delta=0.1, device=device, dtype=dtype)
         print(f"Initial Loss: {training_run(opt_adam).sum():.4f}")
         for epoch in range(15000):
             loss = training_run(opt_adam)
+            stopped = es.update(loss.detach())
+
+            # Snapshot current values so models that have already converged
+            # can be restored after the optimizer step, freezing them in
+            # place without affecting the still-training models. This avoids
+            # zeroing gradients alone, which would still let Adam's momentum
+            # terms nudge frozen parameters.
+            frozen_values = [p.detach().clone() for p in params]
             opt_adam.step()
+            mask = stopped.reshape(1, -1, 1)
+            for p, frozen in zip(params, frozen_values):
+                p.data = torch.where(mask, frozen, p.data)
 
             if epoch % 50 == 0:
-                print(f'Adam Epoch [{epoch+1}/15000], Loss: {loss.sum():.4f}')
+                print(f'Adam Epoch [{epoch+1}/15000], Loss: {loss.sum():.4f}, '
+                      f'Stopped: {stopped.sum().item()}/{total_models}')
 
-            if es.early_stop(loss.sum().item()):
-                print(f'Early stopping Adam pretraining, Epoch: {epoch+1}')
+            if stopped.all():
+                print(f'All models early stopped by Epoch: {epoch+1}')
                 break
 
         # opt_lbgfs = torch.optim.LBFGS([b_tavg, b_dayl, b_cu, b_const, kappa, lam], lr=2,
@@ -425,7 +444,7 @@ with torch.device(device):
             
         #     if epoch % report_freq == 0:
         #         print(f'L-BFGS Epoch [{epoch+1}/{num_epochs}], Loss: {loss.sum():.4f}')
-        if epoch == num_epochs-1:
+        if epoch == 15000-1:
             fit = True
     except Exception as e:
         print(f"Encountered error during optimization: {e}")
