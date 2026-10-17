@@ -93,6 +93,9 @@ for year in range(2001, 2001 + num_years):
     landcover = src.read(1, window=window, boundless=True)
     landcovers.append(landcover)
 landcovers = np.stack(landcovers, axis=0)
+if np.all(landcovers == 0):
+    print("No models to evaluate in this region")
+    sys.exit()
 
 output_x = landcovers.shape[1]//10
 output_y = landcovers.shape[2]//10
@@ -169,20 +172,36 @@ for year_idx, year in enumerate(range(2001, 2001 + num_years)):
             sample_rc = (sample_rows, sample_cols)
 
             # Extract forcings for the sampled pixels within the 10x10 sub-tile
+            # (days, height, width) -> (days, 10, 10)
             sl = (slice(None),)
             tavg_sub = tavg_yr[:, 10*i:10*(i+1), 10*j:10*(j+1)]
             dayl_sub = dayl_yr[:, 10*i:10*(i+1), 10*j:10*(j+1)]
             cu_sub   = cu_yr[:,  10*i:10*(i+1), 10*j:10*(j+1)]
+            # (1, height, width) -> (1, 10, 10)
             sos_sub  = sos_yr[:, 10*i:10*(i+1), 10*j:10*(j+1)]
 
+            # (days, 10, 10) -> (days, n_samples_year)
             tavg_pixyear = tavg_sub[sl + sample_rc]  # (days, n_samples)
             dayl_pixyear = dayl_sub[sl + sample_rc]
             cu_pixyear   = cu_sub[sl + sample_rc]
 
-            sos_vals = sos_sub[sl + sample_rc]  # (1, n_samples)
+            # (1, 10, 10) -> (1, n_samples_year)
+            sos_vals = sos_sub[sl + sample_rc]
+            # (1, n_samples_year) -> (days, n_samples_year)
             days = np.arange(tavg_pixyear.shape[0]).reshape(-1, 1)
             sos_pixyear = (days >= sos_vals.reshape(1, -1)).astype(np.float32)
 
+            # Verify that there are no NaN values in the extracted data
+            if (np.any(np.isnan(tavg_pixyear)) or
+                np.any(np.isnan(dayl_pixyear)) or
+                np.any(np.isnan(cu_pixyear)) or
+                np.any(np.isnan(sos_pixyear))):
+                print(f"Found NaN values in forcings for pixel ({i}, {j}) in year {year}.")
+                skipped.append((i, j))
+                pixel_data[f"{i}_{j}"] = None
+                continue
+
+            # Add extracted data to other years data
             pixel_data[f"{i}_{j}"]['tavg'].append(tavg_pixyear)
             pixel_data[f"{i}_{j}"]['dayl'].append(dayl_pixyear)
             pixel_data[f"{i}_{j}"]['cu'].append(cu_pixyear)
@@ -207,58 +226,64 @@ for i in range(output_x):
         if (i, j) in skipped:
             continue
         d = pixel_data[f"{i}_{j}"]
+        # 24 of (days, n_samples_year) -> (days, n_samples)
         tavg_ij = np.concatenate(d['tavg'], axis=1)
         dayl_ij = np.concatenate(d['dayl'], axis=1)
         cu_ij   = np.concatenate(d['cu'],   axis=1)
         sos_ij  = np.concatenate(d['sos'],  axis=1)
 
+        # Ensure that the number of samples does not exceed the maximum allowed
+        # This should never happen.
         n_samples_ij = tavg_ij.shape[1]
         assert n_samples_ij <= max_samples, (
             f"Pixel {i}_{j} has {n_samples_ij} samples, exceeding max of "
             f"{max_samples} (100 * num_years)."
         )
+
+        # Pad the arrays to the maximum number of samples
         pad_width = max_samples - n_samples_ij
         pad_spec = ((0, 0), (0, pad_width))
-
         tavg_allpixyears.append(np.pad(tavg_ij, pad_spec))
         dayl_allpixyears.append(np.pad(dayl_ij, pad_spec))
         cu_allpixyears.append(np.pad(cu_ij, pad_spec))
         sos_allpixyears.append(np.pad(sos_ij, pad_spec))
 
+        # Create a boolean mask indicating which entries are valid (not padded)
         model_mask = np.zeros((1, max_samples), dtype=bool)
         model_mask[0, :n_samples_ij] = True
         mask_allpixyears.append(model_mask)
 
-tavg = np.stack(tavg_allpixyears, axis=0)  # (n_models, days, max_samples)
+# n_models x (days, max_samples) -> (n_models, days, max_samples)
+tavg = np.stack(tavg_allpixyears, axis=0) 
 dayl = np.stack(dayl_allpixyears, axis=0)
 cu   = np.stack(cu_allpixyears,   axis=0)
 sos  = np.stack(sos_allpixyears,  axis=0)
-mask = np.stack(mask_allpixyears, axis=0)  # (n_models, 1, max_samples)
+# n_models x (1, max_samples) -> (n_models, 1, max_samples)
+mask = np.stack(mask_allpixyears, axis=0) 
 
-# If one of these are nan from the start, report as error
+# If one of these contains nan from the start, report as error
 if (np.any(np.isnan(tavg)) | np.any(np.isnan(dayl)) |
     np.any(np.isnan(cu)) | np.any(np.isnan(sos))):
     print('Found nan forcings')
     sys.exit(1)
 
-# Normalization stats must ignore the zero-padded entries, or they'd be biased
-# towards zero. Use numpy.ma so padded entries are excluded from the
-# mean/std/min/max, then cast back to plain ndarrays.
+# Normalize data per model. Normalization stats must ignore the zero-padded 
+# entries, or they'd be biased towards zero. 
 invalid_bc = np.broadcast_to(~mask, tavg.shape)
 
 tavg_masked = np.ma.masked_array(tavg, mask=invalid_bc)
 tavg = np.ma.getdata(
-    (tavg_masked - tavg_masked.mean(axis=(0,2), keepdims=True))
-    / tavg_masked.std(axis=(0,2), keepdims=True))
+    (tavg_masked - tavg_masked.mean(axis=(1,2), keepdims=True))
+    / tavg_masked.std(axis=(1,2), keepdims=True))
 
 dayl_masked = np.ma.masked_array(dayl, mask=invalid_bc)
 dayl = np.ma.getdata(
-    (dayl_masked - dayl_masked.mean(axis=(0,2), keepdims=True))
-    / dayl_masked.std(axis=(0,2), keepdims=True))
+    (dayl_masked - dayl_masked.mean(axis=(1,2), keepdims=True))
+    / dayl_masked.std(axis=(1,2), keepdims=True))
 
 cu_masked = np.ma.masked_array(cu, mask=invalid_bc)
-cu_min = cu_masked.min(axis=(0,2), keepdims=True)
-cu_max = cu_masked.max(axis=(0,2), keepdims=True)
+cu_min = cu_masked.min(axis=(1,2), keepdims=True)
+cu_max = cu_masked.max(axis=(1,2), keepdims=True)
 cu = np.ma.getdata((cu_masked - cu_min) / (cu_max - cu_min))
 cu = np.where(np.isnan(cu), 0, cu) # If cu doesn't change, it can be set to 0 without affecting model fitting.
 
@@ -278,10 +303,6 @@ with rio.open(f'/lustre/scratch5/cscholl/pheno_params/pheno_params_{args.window}
     profile = src.profile
 
 params = params.reshape((5, output_models, 1))
-# Remove models with any nan parameter, keeping the surviving models in the
-# same order as tavg/dayl/cu/mask (axis 2 varies fastest, then axis 1 -
-# i.e. C-order flattening of the (output_x, output_y) grid, matching the
-# i-outer/j-inner loop used to build those arrays).
 valid_models = ~np.any(np.isnan(params), axis=(0, 2))
 params = params[:, valid_models, :]
 assert params.shape[1] == total_models, f"Number of models in parameters file ({total_models}) does not match number of models in samples ({params.shape[1]})."
@@ -304,25 +325,34 @@ with torch.device(device):
     b_tavg = torch.tensor(params[[0], :, :], dtype=dtype, requires_grad=False)
     b_dayl = torch.tensor(params[[1], :, :], dtype=dtype, requires_grad=False)
     b_cu = torch.tensor(params[[2], :, :], dtype=dtype, requires_grad=False)
-    kappa = torch.tensor(params[[3], :, :], dtype=dtype, requires_grad=False)
-    lam = torch.tensor(params[[4], :, :], dtype=dtype, requires_grad=False)
+    b_const = torch.tensor(params[[3], :, :], dtype=dtype, requires_grad=False)
+    kappa = torch.tensor(params[[4], :, :], dtype=dtype, requires_grad=False)
+    lam = torch.tensor(params[[5], :, :], dtype=dtype, requires_grad=False)
 
 
 ##########################################
 # Define Forward Pass
 ##########################################
 
-def make_prediction(tavgs, dayls, cus, b_tavg, b_dayl, b_cu, lam, kappa):
+def make_prediction(tavgs, dayls, cus, b_tavg, b_dayl, b_cu, b_const, lam, kappa):
+    """Run the forward pass for a single model.
+
+    tavgs, dayls, cus: (days, n_samples) tensors for one model only.
+    b_tavg, b_dayl, b_cu, b_const, kappa, lam: scalar tensors for that same model.
+    """
     pss = []
-    hs = torch.zeros((tavgs.shape[1], tavgs.shape[2]))
-    ps = torch.zeros((tavgs.shape[1], tavgs.shape[2]))
+    # (n_samples,)
+    hs = torch.zeros((tavgs.shape[1],), dtype=dtype)
+    ps = torch.zeros((tavgs.shape[1],), dtype=dtype)
+    # Iterate across days, updating the state of the model for each day.
     for i in range(tavgs.shape[0]):
-        forcings = tavgs[i,:,:]*b_tavg + dayls[i,:,:]*b_dayl + cus[i,:,:]*b_cu
+        forcings = tavgs[i,:]*b_tavg + dayls[i,:]*b_dayl + cus[i,:]*b_cu + b_const
         forcings = torch.maximum(forcings, torch.tensor(0, dtype=dtype))
         hs = hs + forcings*(1 - hs/100.)
-        ps = (1 / (torch.exp(-(kappa + lam*hs)) + 1)) * (1 - ps) + ps
+        ps = (1 / (torch.exp(-lam*(100*kappa + hs)) + 1)) * (1 - ps) + ps
         pss.append(ps)
-    pred = torch.concat(pss, dim=0)
+    # days x (n_samples,) -> (days, n_samples)
+    pred = torch.stack(pss, dim=0)
 
     return pred
 
@@ -333,7 +363,7 @@ def make_prediction(tavgs, dayls, cus, b_tavg, b_dayl, b_cu, lam, kappa):
 
 with torch.device(device):
    with torch.no_grad():
-        pred = make_prediction(tavg, dayl, cu, b_tavg, b_dayl, b_cu, lam, kappa)
+        pred = make_prediction(tavg, dayl, cu, b_tavg, b_dayl, b_cu, b_const, lam, kappa)
         # We use the continuous ranked probability score (CRPS) as the loss function
         # which is a common forecasting metric. 
         ## Sum over days to get total CRPS
@@ -366,6 +396,7 @@ for i in range(output_x):
 # contains all pixels, even if a model wasn't fit for all of them.
 crps_save = torch.full((1, output_models, 1), np.nan, dtype=dtype, device='cpu')
 crps_save.scatter_(1, torch.tensor(index).reshape(1,-1,1), crps.cpu())
+crps_save = crps_save.reshape((1, output_x, output_y))
 
 profile['count'] = 1
 with rio.Env():
