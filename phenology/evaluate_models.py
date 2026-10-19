@@ -14,6 +14,7 @@ import torch
 import torch.masked as tmask
 
 import load_daymet_forcing_v2
+import pheno_helpers
 
 ########################################
 # Parse arguments for running on cluster
@@ -85,52 +86,21 @@ print('Using window: ', window)
 # Retrieve pixel-year evaluation samples
 ##########################################
 
-print("Loading landcovers")
 # Load landcovers into single data frame for generating pixel-year samples
-landcovers = []
-for year in range(2001, 2001 + num_years):
-  with rio.open(f'/lustre/scratch5/cscholl/landcover/{year}_01_01.tif') as src:
-    landcover = src.read(1, window=window, boundless=True)
-    landcovers.append(landcover)
-landcovers = np.stack(landcovers, axis=0)
+landcovers = pheno_helpers.load_landcovers('/lustre/scratch5/cscholl/landcover', 
+                              num_years, 
+                              window)
 if np.all(landcovers == 0):
     print("No models to evaluate in this region")
     sys.exit()
 
-output_x = landcovers.shape[1]//10
-output_y = landcovers.shape[2]//10
-output_models = output_x*output_y
+output_x, output_y, output_models = pheno_helpers.get_output_dimensions(landcovers)
 
-print("Creating evaluation samples")
-# Get samples used for model fitting.
-with open(f'/lustre/scratch5/cscholl/samples/{args.window}.json', 'r') as f:
-    sample_choices = json.load(f)
-
-samples = {}
-skipped = []
-for i in range(output_x):
-  for j in range(output_y):
-    # Get subsample that is only this output pixel
-    mask = landcovers[:,
-                      10*i:10*(i+1),
-                      10*j:10*(j+1)]
-    # Get tuple of indices along each axis of only non-zero elements
-    # e.g. ([1, 1, 4, 5, 6], <- years
-    #       [0, 10, 13, 15, 15], <- rows  
-    #       [2, 3, 3, 3, 10]) <- columns
-    nonzero = np.nonzero(mask)
-    # If no elements to be sampled, skip this
-    if len(nonzero[0]) == 0:
-      skipped.append((i,j))
-      continue
-    # If less than 300 elements, all pixel-years are used for evaluation.
-    if sample_choices[f'{i}_{j}'] == 'all':
-      samples[f'{i}_{j}'] = nonzero
-    else:
-       # Invert the list of indices
-       indices = list(set(range(nonzero[0].shape[0]))
-                        .difference(sample_choices[f'{i}_{j}']))
-       samples[f'{i}_{j}'] = tuple(dim[indices] for dim in nonzero)
+samples, skipped = pheno_helpers.create_evaluation_samples(
+   landcovers, 
+   output_x, 
+   output_y, 
+   save_path=f'/lustre/scratch5/cscholl/samples/{args.window}.json')
 
 total_models = output_models - len(skipped)
 
@@ -139,73 +109,16 @@ total_models = output_models - len(skipped)
 # Load and rearrange data for computations
 ##########################################
 
-pixel_data = {
-    f"{i}_{j}": {'tavg': [], 'dayl': [], 'cu': [], 'sos': []}
-    for i in range(output_x) for j in range(output_y)
-    if (i, j) not in skipped
-}
-
-for year_idx, year in enumerate(range(2001, 2001 + num_years)):
-    print(f"Loading year {year}")
-    tavg_yr, dayl_yr, cu_yr = load_daymet_forcing_v2.load_year_forcing(
-        year=year,
-        daymet_dir='/lustre/scratch5/cscholl/daymet',
-        imagery_path=f'/lustre/scratch5/cscholl/modis/{year}_01_01.tif',
-        chill_threshold=5.0,
-        window=window
-    )
-    with rio.open(f'/lustre/scratch5/cscholl/modis/{year}_01_01.tif') as src:
-        sos_yr = src.read(boundless=True, window=window)
-
-    for i in range(output_x):
-        for j in range(output_y):
-            if (i, j) in skipped:
-                continue
-
-            # Filter sample indices to those belonging to this year
-            year_mask = samples[f"{i}_{j}"][0] == year_idx
-            if not year_mask.any():
-                continue
-
-            sample_rows = samples[f"{i}_{j}"][1][year_mask]
-            sample_cols = samples[f"{i}_{j}"][2][year_mask]
-            sample_rc = (sample_rows, sample_cols)
-
-            # Extract forcings for the sampled pixels within the 10x10 sub-tile
-            # (days, height, width) -> (days, 10, 10)
-            sl = (slice(None),)
-            tavg_sub = tavg_yr[:, 10*i:10*(i+1), 10*j:10*(j+1)]
-            dayl_sub = dayl_yr[:, 10*i:10*(i+1), 10*j:10*(j+1)]
-            cu_sub   = cu_yr[:,  10*i:10*(i+1), 10*j:10*(j+1)]
-            # (1, height, width) -> (1, 10, 10)
-            sos_sub  = sos_yr[:, 10*i:10*(i+1), 10*j:10*(j+1)]
-
-            # (days, 10, 10) -> (days, n_samples_year)
-            tavg_pixyear = tavg_sub[sl + sample_rc]  # (days, n_samples)
-            dayl_pixyear = dayl_sub[sl + sample_rc]
-            cu_pixyear   = cu_sub[sl + sample_rc]
-
-            # (1, 10, 10) -> (1, n_samples_year)
-            sos_vals = sos_sub[sl + sample_rc]
-            # (1, n_samples_year) -> (days, n_samples_year)
-            days = np.arange(tavg_pixyear.shape[0]).reshape(-1, 1)
-            sos_pixyear = (days >= sos_vals.reshape(1, -1)).astype(np.float32)
-
-            # Verify that there are no NaN values in the extracted data
-            if (np.any(np.isnan(tavg_pixyear)) or
-                np.any(np.isnan(dayl_pixyear)) or
-                np.any(np.isnan(cu_pixyear)) or
-                np.any(np.isnan(sos_pixyear))):
-                print(f"Found NaN values in forcings for pixel ({i}, {j}) in year {year}.")
-                skipped.append((i, j))
-                pixel_data[f"{i}_{j}"] = None
-                continue
-
-            # Add extracted data to other years data
-            pixel_data[f"{i}_{j}"]['tavg'].append(tavg_pixyear)
-            pixel_data[f"{i}_{j}"]['dayl'].append(dayl_pixyear)
-            pixel_data[f"{i}_{j}"]['cu'].append(cu_pixyear)
-            pixel_data[f"{i}_{j}"]['sos'].append(sos_pixyear)
+pixel_data = pheno_helpers.extract_forcings_and_targets(
+    samples=samples,
+    skipped=skipped,
+    output_x=output_x,
+    output_y=output_y,
+    num_years=num_years,
+    window=window,
+    daymet_path='/lustre/scratch5/cscholl/daymet',
+    imagery_path='/lustre/scratch5/cscholl/modis'
+)
 
 # Assemble final arrays by concatenating year chunks per pixel, then zero-padding
 # the sample axis to a fixed size and stacking across pixels. The fixed size is
@@ -267,45 +180,50 @@ if (np.any(np.isnan(tavg)) | np.any(np.isnan(dayl)) |
     print('Found nan forcings')
     sys.exit(1)
 
-# Normalize data per model. Normalization stats must ignore the zero-padded 
-# entries, or they'd be biased towards zero. 
-invalid_bc = np.broadcast_to(~mask, tavg.shape)
+##########################################
+# Load model parameters and forcing stats
+##########################################
 
-tavg_masked = np.ma.masked_array(tavg, mask=invalid_bc)
-tavg = np.ma.getdata(
-    (tavg_masked - tavg_masked.mean(axis=(1,2), keepdims=True))
-    / tavg_masked.std(axis=(1,2), keepdims=True))
+# Save results
+with rio.open(f'/lustre/scratch5/cscholl/pheno_params/pheno_params_{args.window}.tif',
+                'r') as src:
+    params = src.read()
+    profile = src.profile
 
-dayl_masked = np.ma.masked_array(dayl, mask=invalid_bc)
-dayl = np.ma.getdata(
-    (dayl_masked - dayl_masked.mean(axis=(1,2), keepdims=True))
-    / dayl_masked.std(axis=(1,2), keepdims=True))
+params = params.reshape((6, output_models, 1))
+valid_models = ~np.any(np.isnan(params), axis=(0, 2))
+params = params[:, valid_models, :]
+assert params.shape[1] == total_models, f"Number of models in parameters file ({total_models}) does not match number of models in samples ({params.shape[1]})."
 
-cu_masked = np.ma.masked_array(cu, mask=invalid_bc)
-cu_min = cu_masked.min(axis=(1,2), keepdims=True)
-cu_max = cu_masked.max(axis=(1,2), keepdims=True)
-cu = np.ma.getdata((cu_masked - cu_min) / (cu_max - cu_min))
+# Forcing normalization statistics (per-model tavg mean/std, dayl mean/std,
+# cu min/max) computed at training time. These must be reused here so that
+# evaluation data is transformed identically to the training data.
+with rio.open(f'/lustre/scratch5/cscholl/forcings/forcings_{args.window}.tif',
+                'r') as src:
+    forcing_stats = src.read()
+
+forcing_stats = forcing_stats.reshape((6, output_models, 1))
+forcing_stats = forcing_stats[:, valid_models, :]
+assert forcing_stats.shape[1] == total_models, f"Number of models in forcing stats file ({total_models}) does not match number of models in samples ({forcing_stats.shape[1]})."
+
+tavg_mean = forcing_stats[0].reshape(total_models, 1, 1)
+tavg_std  = forcing_stats[1].reshape(total_models, 1, 1)
+dayl_mean = forcing_stats[2].reshape(total_models, 1, 1)
+dayl_std  = forcing_stats[3].reshape(total_models, 1, 1)
+cu_min    = forcing_stats[4].reshape(total_models, 1, 1)
+cu_max    = forcing_stats[5].reshape(total_models, 1, 1)
+
+# Normalize data per model, using the training-time statistics loaded above
+# rather than statistics computed from the evaluation data itself.
+tavg = (tavg - tavg_mean) / tavg_std
+dayl = (dayl - dayl_mean) / dayl_std
+cu = (cu - cu_min) / (cu_max - cu_min)
 cu = np.where(np.isnan(cu), 0, cu) # If cu doesn't change, it can be set to 0 without affecting model fitting.
 
 print('tavg', tavg.shape)
 print('dayl', dayl.shape)
 print('cu', cu.shape)
 print('mask', mask.shape)
-
-##########################################
-# Load model parameters
-##########################################
-
-# Save results
-with rio.open(f'/lustre/scratch5/cscholl/pheno_params/pheno_params_{args.window}.tif', 
-                'r') as src:
-    params = src.read()
-    profile = src.profile
-
-params = params.reshape((5, output_models, 1))
-valid_models = ~np.any(np.isnan(params), axis=(0, 2))
-params = params[:, valid_models, :]
-assert params.shape[1] == total_models, f"Number of models in parameters file ({total_models}) does not match number of models in samples ({params.shape[1]})."
 
 
 ##########################################
@@ -331,39 +249,17 @@ with torch.device(device):
 
 
 ##########################################
-# Define Forward Pass
-##########################################
-
-def make_prediction(tavgs, dayls, cus, b_tavg, b_dayl, b_cu, b_const, lam, kappa):
-    """Run the forward pass for a single model.
-
-    tavgs, dayls, cus: (days, n_samples) tensors for one model only.
-    b_tavg, b_dayl, b_cu, b_const, kappa, lam: scalar tensors for that same model.
-    """
-    pss = []
-    # (n_samples,)
-    hs = torch.zeros((tavgs.shape[1],), dtype=dtype)
-    ps = torch.zeros((tavgs.shape[1],), dtype=dtype)
-    # Iterate across days, updating the state of the model for each day.
-    for i in range(tavgs.shape[0]):
-        forcings = tavgs[i,:]*b_tavg + dayls[i,:]*b_dayl + cus[i,:]*b_cu + b_const
-        forcings = torch.maximum(forcings, torch.tensor(0, dtype=dtype))
-        hs = hs + forcings*(1 - hs/100.)
-        ps = (1 / (torch.exp(-lam*(100*kappa + hs)) + 1)) * (1 - ps) + ps
-        pss.append(ps)
-    # days x (n_samples,) -> (days, n_samples)
-    pred = torch.stack(pss, dim=0)
-
-    return pred
-
-
-##########################################
 # Run Model Evaluation
 ##########################################
 
 with torch.device(device):
    with torch.no_grad():
-        pred = make_prediction(tavg, dayl, cu, b_tavg, b_dayl, b_cu, b_const, lam, kappa)
+        pred = pheno_helpers.make_prediction(
+            tavg, dayl, cu, 
+            b_tavg, b_dayl, b_cu, b_const, 
+            kappa, lam,
+            dtype
+        )
         # We use the continuous ranked probability score (CRPS) as the loss function
         # which is a common forecasting metric. 
         ## Sum over days to get total CRPS
@@ -375,6 +271,21 @@ with torch.device(device):
         ## (1, n_models, n_samples) -> (1, n_models, 1)
         crps_masked = tmask.masked_tensor(crps, mask)
         crps = torch.mean(crps_masked, dim=2, keepdim=True).get_data()
+
+        # We also compute the root mean squared error (RMSE) of start-of-season
+        # (SoS) day predictions. The predicted SoS day is the first day on which
+        # the cumulative prediction probability exceeds 50%, and the true SoS
+        # day is the first day on which the (also cumulative) target exceeds 50%.
+        # Since both pred and sos are non-decreasing step-like functions bounded
+        # in [0, 1], argmax of the boolean crossing returns the first day index
+        # where the 50% threshold is crossed.
+        ## (days, n_models, n_samples) -> (1, n_models, n_samples)
+        pred_day = torch.argmax((pred > 0.5), dim=0, keepdim=True).to(dtype=dtype)
+        true_day = torch.argmax((sos > 0.5), dim=0, keepdim=True).to(dtype=dtype)
+        sq_err = (pred_day - true_day)**2
+        ## (1, n_models, n_samples) -> (1, n_models, 1)
+        sq_err_masked = tmask.masked_tensor(sq_err, mask)
+        rmse = torch.sqrt(torch.mean(sq_err_masked, dim=2, keepdim=True).get_data())
 
 
 ##########################################
@@ -392,14 +303,22 @@ for i in range(output_x):
       continue
     index.append(i*output_y + j)
 
-# Scatter crps into full array. This ensures that final array
-# contains all pixels, even if a model wasn't fit for all of them.
+# Scatter crps and rmse into full arrays. This ensures that final arrays
+# contain all pixels, even if a model wasn't fit for all of them.
 crps_save = torch.full((1, output_models, 1), np.nan, dtype=dtype, device='cpu')
 crps_save.scatter_(1, torch.tensor(index).reshape(1,-1,1), crps.cpu())
 crps_save = crps_save.reshape((1, output_x, output_y))
 
-profile['count'] = 1
+rmse_save = torch.full((1, output_models, 1), np.nan, dtype=dtype, device='cpu')
+rmse_save.scatter_(1, torch.tensor(index).reshape(1,-1,1), rmse.cpu())
+rmse_save = rmse_save.reshape((1, output_x, output_y))
+
+eval_save = torch.cat([crps_save, rmse_save], dim=0)
+
+profile['count'] = 2
 with rio.Env():
-    with rio.open(f'/lustre/scratch5/cscholl/pheno_eval/pheno_eval_{args.window}.tif', 
+    with rio.open(f'/lustre/scratch5/cscholl/pheno_eval/pheno_eval_{args.window}.tif',
                   'w', **profile) as dst:
-        dst.write(crps_save)
+        dst.write(eval_save)
+        dst.set_band_description(1, 'crps')
+        dst.set_band_description(2, 'rmse')
