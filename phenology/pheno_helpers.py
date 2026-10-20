@@ -246,15 +246,24 @@ def extract_forcings_and_targets(samples,
                 days = np.arange(tavg_pixyear.shape[0]).reshape(-1, 1)
                 sos_pixyear = (days >= sos_vals.reshape(1, -1)).astype(np.float32)
 
-                # Verify that there are no NaN values in the extracted data
-                if (np.any(np.isnan(tavg_pixyear)) or
-                    np.any(np.isnan(dayl_pixyear)) or
-                    np.any(np.isnan(cu_pixyear)) or
-                    np.any(np.isnan(sos_pixyear))):
-                    print(f"Found NaN values in forcings for pixel ({i}, {j}) in year {year}.")
-                    skipped.append((i, j))
-                    pixel_data[f"{i}_{j}"] = None
-                    continue
+                # Identify samples with NaN values anywhere in their forcing/target
+                # series and drop only those samples, preserving the rest of this
+                # pixel/year's data (and all other pixel/year combos).
+                nan_mask = (np.isnan(tavg_pixyear).any(axis=0) |
+                            np.isnan(dayl_pixyear).any(axis=0) |
+                            np.isnan(cu_pixyear).any(axis=0) |
+                            np.isnan(sos_pixyear).any(axis=0))
+                if nan_mask.any():
+                    print(f"Found NaN values in forcings for pixel ({i}, {j}) in "
+                          f"year {year}; dropping {nan_mask.sum()} of "
+                          f"{nan_mask.shape[0]} samples.")
+                    valid = ~nan_mask
+                    tavg_pixyear = tavg_pixyear[:, valid]
+                    dayl_pixyear = dayl_pixyear[:, valid]
+                    cu_pixyear   = cu_pixyear[:, valid]
+                    sos_pixyear  = sos_pixyear[:, valid]
+                    if tavg_pixyear.shape[1] == 0:
+                        continue
 
                 # Add extracted data to other years data
                 pixel_data[f"{i}_{j}"]['tavg'].append(tavg_pixyear)
@@ -262,7 +271,7 @@ def extract_forcings_and_targets(samples,
                 pixel_data[f"{i}_{j}"]['cu'].append(cu_pixyear)
                 pixel_data[f"{i}_{j}"]['sos'].append(sos_pixyear)
 
-    return pixel_data
+    return pixel_data, skipped
 
 def make_prediction(tavgs, 
                     dayls, 

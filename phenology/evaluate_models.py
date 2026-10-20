@@ -100,7 +100,7 @@ samples, skipped = pheno_helpers.create_evaluation_samples(
    landcovers, 
    output_x, 
    output_y, 
-   save_path=f'/lustre/scratch5/cscholl/samples/{args.window}.json')
+   sample_choices_path=f'/lustre/scratch5/cscholl/samples/{args.window}.json')
 
 total_models = output_models - len(skipped)
 
@@ -109,7 +109,7 @@ total_models = output_models - len(skipped)
 # Load and rearrange data for computations
 ##########################################
 
-pixel_data = pheno_helpers.extract_forcings_and_targets(
+pixel_data, skipped = pheno_helpers.extract_forcings_and_targets(
     samples=samples,
     skipped=skipped,
     output_x=output_x,
