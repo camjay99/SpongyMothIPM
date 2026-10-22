@@ -191,7 +191,7 @@ with rio.open(f'/lustre/scratch5/cscholl/pheno_params/pheno_params_{args.window}
     profile = src.profile
 
 params = params.reshape((6, output_models, 1))
-valid_models = ~np.any(np.isnan(params), axis=(0, 2))
+valid_models = np.all(np.isfinite(params), axis=(0, 2))
 params = params[:, valid_models, :]
 assert params.shape[1] == total_models, f"Number of models in parameters file ({total_models}) does not match number of models in samples ({params.shape[1]})."
 

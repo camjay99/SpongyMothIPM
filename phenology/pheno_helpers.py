@@ -271,6 +271,13 @@ def extract_forcings_and_targets(samples,
                 pixel_data[f"{i}_{j}"]['cu'].append(cu_pixyear)
                 pixel_data[f"{i}_{j}"]['sos'].append(sos_pixyear)
 
+    # Skip years where no samples were added.
+    for i in range(output_x):
+        for j in range(output_y):
+            if len(pixel_data[f"{i}_{j}"]['tavg']) == 0:
+                skipped.append((i, j))
+                print(f"Skipping pixel ({i}, {j}) because no valid samples were found across all years.")
+
     return pixel_data, skipped
 
 def make_prediction(tavgs, 
