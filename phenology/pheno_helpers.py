@@ -274,7 +274,7 @@ def extract_forcings_and_targets(samples,
     # Skip years where no samples were added.
     for i in range(output_x):
         for j in range(output_y):
-            if (i, j) in skipped:
+            if (i,j) in skipped:
                 continue
             if len(pixel_data[f"{i}_{j}"]['tavg']) == 0:
                 skipped.append((i, j))
@@ -298,17 +298,17 @@ def make_prediction(tavgs,
     b_tavg, b_dayl, b_cu, b_const, kappa, lam: scalar tensors for that same model.
     """
     pss = []
-    # (n_models, n_samples)
-    hs = torch.zeros((tavgs.shape[1],tavgs.shape[2]), dtype=dtype)
-    ps = torch.zeros((tavgs.shape[1],tavgs.shape[2]), dtype=dtype)
+    # (n_samples,)
+    hs = torch.zeros((tavgs.shape[1],), dtype=dtype)
+    ps = torch.zeros((tavgs.shape[1],), dtype=dtype)
     # Iterate across days, updating the state of the model for each day.
     for i in range(tavgs.shape[0]):
-        forcings = tavgs[i,:,:]*b_tavg + dayls[i,:,:]*b_dayl + cus[i,:,:]*b_cu + b_const
+        forcings = tavgs[i,:]*b_tavg + dayls[i,:]*b_dayl + cus[i,:]*b_cu + b_const
         forcings = torch.maximum(forcings, torch.tensor(0, dtype=dtype))
         hs = hs + forcings*(1 - hs/100.)
         ps = (1 / (torch.exp(-lam*(100*kappa + hs)) + 1)) * (1 - ps) + ps
         pss.append(ps)
-    # days x (n_models, n_samples) -> (days, n_models, n_samples)
+    # days x (n_samples,) -> (days, n_samples)
     pred = torch.stack(pss, dim=0)
 
     return pred
