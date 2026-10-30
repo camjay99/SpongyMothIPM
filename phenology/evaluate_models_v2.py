@@ -247,8 +247,8 @@ with torch.no_grad():
             # are non-decreasing step-like functions bounded in [0, 1], argmax
             # of the boolean crossing returns the first day index where the
             # 50% threshold is crossed.
-            pred_day = torch.argmax((pred > 0.5), dim=0).to(dtype=dtype)
-            true_day = torch.argmax((sos_t > 0.5), dim=0).to(dtype=dtype)
+            pred_day = torch.argmax((pred > 0.5).to(dtype=torch.int32), dim=0).to(dtype=dtype)
+            true_day = torch.argmax((sos_t > 0.5).to(dtype=torch.int32), dim=0).to(dtype=dtype)
             rmse = torch.sqrt(torch.mean((pred_day - true_day)**2))
 
         crps_save[i, j] = crps.detach().cpu().item()
