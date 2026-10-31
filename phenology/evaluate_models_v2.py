@@ -95,7 +95,7 @@ if np.all(landcovers == 0):
 
 output_x, output_y, output_models = pheno_helpers.get_output_dimensions(landcovers)
 
-samples, skipped = pheno_helpers.create_evaluation_samples(
+samples, skipped, trained_on_training_data = pheno_helpers.create_evaluation_samples(
    landcovers,
    output_x,
    output_y,
@@ -105,6 +105,8 @@ samples, skipped = pheno_helpers.create_evaluation_samples(
 ##########################################
 # Load and rearrange data for computations
 ##########################################
+
+eval_skipped = set(skipped)
 
 pixel_data, skipped = pheno_helpers.extract_forcings_and_targets(
     samples=samples,
@@ -116,6 +118,35 @@ pixel_data, skipped = pheno_helpers.extract_forcings_and_targets(
     daymet_path='/lustre/scratch5/cscholl/daymet',
     imagery_path='/lustre/scratch5/cscholl/modis'
 )
+
+# Pixels newly skipped here (as opposed to already being skipped due to
+# having no landcover pixel-years at all) had evaluation samples that were
+# entirely dropped as NaN. Fall back to evaluating those models on their
+# full training data instead of dropping them.
+nan_skipped = sorted(set(skipped) - eval_skipped)
+if nan_skipped:
+    print(f"Falling back to training data for {len(nan_skipped)} pixels "
+          "with no valid evaluation samples")
+    fallback_samples, _ = pheno_helpers.create_full_samples(
+        landcovers, output_x, output_y)
+    fallback_skip = [(i, j) for i in range(output_x) for j in range(output_y)
+                     if (i, j) not in nan_skipped]
+    fallback_data, _ = pheno_helpers.extract_forcings_and_targets(
+        samples=fallback_samples,
+        skipped=fallback_skip,
+        output_x=output_x,
+        output_y=output_y,
+        num_years=num_years,
+        window=window,
+        daymet_path='/lustre/scratch5/cscholl/daymet',
+        imagery_path='/lustre/scratch5/cscholl/modis'
+    )
+    for (i, j) in nan_skipped:
+        key = f"{i}_{j}"
+        if len(fallback_data[key]['tavg']) > 0:
+            pixel_data[key] = fallback_data[key]
+            skipped.remove((i, j))
+            trained_on_training_data.add((i, j))
 
 # Assemble final arrays by concatenating year chunks per pixel. Each model's
 # forcings/target stay as their own (days, n_samples) array -- there is no
@@ -194,6 +225,9 @@ forcing_stats_permodel = [forcing_stats[:, m, 0] for m in range(n_models)]
 # parameters for a single model.
 crps_save = np.full((output_x, output_y), np.nan, dtype=np.float32)
 rmse_save = np.full((output_x, output_y), np.nan, dtype=np.float32)
+trained_on_training_save = np.full((output_x, output_y), np.nan, dtype=np.float32)
+for (i, j) in index:
+    trained_on_training_save[i, j] = (i, j) in trained_on_training_data
 
 print("Starting model evaluation")
 with torch.no_grad():
@@ -272,12 +306,13 @@ print(f'Finished evaluating {n_models} models')
 # Save Evaluation Output
 ##########################################
 
-eval_save = np.stack([crps_save, rmse_save], axis=0)
+eval_save = np.stack([crps_save, rmse_save, trained_on_training_save], axis=0)
 
-profile['count'] = 2
+profile['count'] = 3
 with rio.Env():
     with rio.open(f'/lustre/scratch5/cscholl/pheno_eval/pheno_eval_{args.window}.tif',
                   'w', **profile) as dst:
         dst.write(eval_save)
         dst.set_band_description(1, 'crps')
         dst.set_band_description(2, 'rmse')
+        dst.set_band_description(3, 'trained_on_training_data')

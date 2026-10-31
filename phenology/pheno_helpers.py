@@ -128,9 +128,14 @@ def create_evaluation_samples(landcovers, output_x, output_y, sample_choices_pat
 
     Returns:
     - eval_samples: dict, a dictionary of evaluation samples.
+    - skipped: list of tuples, list of (i,j) indices with no pixel-years.
+    - trained_on_eval_data: set of tuples, (i,j) indices of models whose
+        evaluation samples are drawn from their training data (either because
+        all pixel-years were used in training, or because no held-out
+        pixel-years remained).
     """
 
-    print("Creating evaluation samples")   
+    print("Creating evaluation samples")
 
     # Load sample choices from JSON file
     with open(sample_choices_path, 'r') as f:
@@ -138,6 +143,7 @@ def create_evaluation_samples(landcovers, output_x, output_y, sample_choices_pat
 
     samples = {}
     skipped = []
+    trained_on_eval_data = set()
     for i in range(output_x):
         for j in range(output_y):
             # Get subsample that is only this output pixel
@@ -146,7 +152,7 @@ def create_evaluation_samples(landcovers, output_x, output_y, sample_choices_pat
                             10*j:10*(j+1)]
             # Get tuple of indices along each axis of only non-zero elements
             # e.g. ([1, 1, 4, 5, 6], <- years
-            #       [0, 10, 13, 15, 15], <- rows  
+            #       [0, 10, 13, 15, 15], <- rows
             #       [2, 3, 3, 3, 10]) <- columns
             nonzero = np.nonzero(mask)
             # If no elements to be sampled, skip this
@@ -156,15 +162,59 @@ def create_evaluation_samples(landcovers, output_x, output_y, sample_choices_pat
             # If less than 300 elements, all pixel-years are used for evaluation.
             if sample_choices[f'{i}_{j}'] == 'all':
                 samples[f'{i}_{j}'] = nonzero
+                trained_on_eval_data.add((i, j))
             else:
                 # Invert the list of indices
                 indices = list(set(range(nonzero[0].shape[0]))
                                     .difference(sample_choices[f'{i}_{j}']))
-                samples[f'{i}_{j}'] = tuple(dim[indices] for dim in nonzero)
+                # If every pixel-year was used in training (e.g. the training
+                # sample count equaled the number of available pixel-years),
+                # there is no held-out data left for evaluation. Fall back to
+                # evaluating on the full training data for this model instead.
+                if len(indices) == 0:
+                    samples[f'{i}_{j}'] = nonzero
+                    trained_on_eval_data.add((i, j))
+                else:
+                    samples[f'{i}_{j}'] = tuple(dim[indices] for dim in nonzero)
+
+    return samples, skipped, trained_on_eval_data
+
+def create_full_samples(landcovers, output_x, output_y):
+    """
+    Build samples from all available pixel-years (i.e. the full training data,
+    unfiltered by any train/evaluation split) for every output pixel.
+
+    Used as a fallback source of evaluation data for a model whose held-out
+    evaluation samples turn out to be entirely invalid (e.g. all NaN after
+    filtering), so that the model can still be evaluated on its training data
+    instead of being dropped.
+
+    Parameters:
+    - landcovers: np.ndarray (num_years, height, width).
+    - output_x: int, number of output pixels in the x-direction.
+    - output_y: int, number of output pixels in the y-direction.
+
+    Returns:
+    - samples: dict, a dictionary of samples.
+    - skipped: list of tuples, list of (i,j) indices with no pixel-years.
+    """
+
+    samples = {}
+    skipped = []
+    for i in range(output_x):
+        for j in range(output_y):
+            mask = landcovers[:,
+                            10*i:10*(i+1),
+                            10*j:10*(j+1)]
+            nonzero = np.nonzero(mask)
+            if len(nonzero[0]) == 0:
+                skipped.append((i, j))
+                continue
+            samples[f"{i}_{j}"] = nonzero
 
     return samples, skipped
 
-def extract_forcings_and_targets(samples, 
+def extract_forcings_and_targets(samples,
                                  skipped,
                                  output_x, 
                                  output_y, 
