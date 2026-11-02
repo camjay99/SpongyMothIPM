@@ -182,8 +182,6 @@ for m in range(n_models):
         print('Found nan forcings')
         sys.exit(1)
 
-print('n_models', n_models)
-
 
 ##########################################
 # Load model parameters and forcing stats
@@ -197,7 +195,6 @@ with rio.open(f'/lustre/scratch5/cscholl/pheno_params/pheno_params_{args.window}
 params = params.reshape((6, output_models, 1))
 valid_models = np.all(np.isfinite(params), axis=(0, 2))
 params = params[:, valid_models, :]
-assert params.shape[1] == n_models, f"Number of models in parameters file ({params.shape[1]}) does not match number of models in samples ({n_models})."
 
 # Forcing normalization statistics (per-model tavg mean/std, dayl mean/std,
 # cu min/max) computed at training time. These must be reused here so that
@@ -208,12 +205,34 @@ with rio.open(f'/lustre/scratch5/cscholl/forcings/forcings_{args.window}.tif',
 
 forcing_stats = forcing_stats.reshape((6, output_models, 1))
 forcing_stats = forcing_stats[:, valid_models, :]
-assert forcing_stats.shape[1] == n_models, f"Number of models in forcing stats file ({forcing_stats.shape[1]}) does not match number of models in samples ({n_models})."
+
+# Match samples to trained models by (i, j) rather than assuming the two
+# line up by count. A sample can exist for a pixel that has no corresponding
+# trained model (e.g. training failed or was skipped for that pixel), in
+# which case params/forcing_stats hold NaN there and valid_models excludes
+# it -- drop any such sample instead of evaluating it.
+flat_coords = [(i, j) for i in range(output_x) for j in range(output_y)]
+valid_coords = [coord for coord, valid in zip(flat_coords, valid_models) if valid]
+valid_col = {coord: col for col, coord in enumerate(valid_coords)}
+
+keep = [m for m, coord in enumerate(index) if coord in valid_col]
+if len(keep) < len(index):
+    print(f"Skipping {len(index) - len(keep)} sampled pixels with no "
+          "corresponding trained model")
+cols = [valid_col[index[m]] for m in keep]
+
+index = [index[m] for m in keep]
+tavg_permodel = [tavg_permodel[m] for m in keep]
+dayl_permodel = [dayl_permodel[m] for m in keep]
+cu_permodel   = [cu_permodel[m] for m in keep]
+sos_permodel  = [sos_permodel[m] for m in keep]
+n_models = len(index)
+print('n_models', n_models)
 
 # Per-model scalar parameters and forcing stats, so that neither the data
 # assembled above nor these need to be batched across models.
-params_permodel = [params[:, m, 0] for m in range(n_models)]
-forcing_stats_permodel = [forcing_stats[:, m, 0] for m in range(n_models)]
+params_permodel = [params[:, col, 0] for col in cols]
+forcing_stats_permodel = [forcing_stats[:, col, 0] for col in cols]
 
 
 ##########################################
