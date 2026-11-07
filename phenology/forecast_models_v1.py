@@ -155,7 +155,7 @@ with torch.no_grad():
         # Output accumulator lives on the CPU and is filled in as each model
         # is forecast, so GPU memory only ever has to hold one model's worth
         # of forcings and parameters at a time.
-        forecast_save = np.full((n_days, output_x, output_y), NODATA, dtype=np.int16)
+        forecast_save = np.full((n_days, output_x, output_y), NODATA, dtype=np.uint16)
 
         for m in range(n_models):
             i, j = index[m]
