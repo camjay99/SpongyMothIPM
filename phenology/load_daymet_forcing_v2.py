@@ -227,17 +227,30 @@ def load_year_forcing(
 ) -> Dict[str, np.ndarray]:
     """Load all daily forcings for a year and compute CU/tavg stacks.
 
+    When `cmip6_dir` is provided, `year` is treated as the future year to
+    forecast (e.g. 2086-2100). The corresponding historical Daymet year
+    (year - 86, e.g. 2000-2014) is used as the base climate, corrected with
+    CMIP6 anomalies for the requested future year.
+
     Returns dictionary with keys:
       tavg: (days, rows, cols)
       dayl: (days, rows, cols)
       cu:   (days, rows, cols)
     """
-    daymet_files = list_daily_daymet_files(daymet_dir, year)
     if cmip6_dir != "":
-        cmip6_files = list_daily_cmip6_files(cmip6_dir, year+86)
+        daymet_year = year - 86
+        cmip6_files = list_daily_cmip6_files(cmip6_dir, year)
+    else:
+        daymet_year = year
+    daymet_files = list_daily_daymet_files(daymet_dir, daymet_year)
+    if cmip6_dir != "" and len(cmip6_files) != len(daymet_files):
+        raise ValueError(
+            f"Mismatched file counts: {len(daymet_files)} Daymet files for "
+            f"{daymet_year} vs {len(cmip6_files)} CMIP6 files for {year}"
+        )
     dst_profile = get_target_grid(imagery_path, window)
     dest_days: List[np.ndarray] = []
-    for daymet_path in daymet_files:
+    for day_idx, daymet_path in enumerate(daymet_files):
         daymet_data, daymet_profile = read_dataset(
             path=daymet_path,
             dst_profile=dst_profile,
@@ -247,7 +260,7 @@ def load_year_forcing(
         # and add the temperature deltas to the Daymet tmax/tmin bands.
         if cmip6_dir != "":
             cmip6_data, cmip6_profile = read_dataset(
-                path=cmip6_dir,
+                path=cmip6_files[day_idx],
                 dst_profile=daymet_profile,
                 bands=[1,2,3]
             )
